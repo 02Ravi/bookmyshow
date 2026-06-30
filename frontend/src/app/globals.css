@@ -1,0 +1,76 @@
+@import "tailwindcss";
+
+:root {
+  --bms-red: #f84464;
+  --bms-red-hover: #e73353;
+  --bms-header: #1f2533;
+  --bms-header-alt: #333a4d;
+  --bms-page: #f5f5f5;
+  --bms-card: #ffffff;
+  --bms-text: #333333;
+  --bms-text-muted: #666666;
+  --bms-border: #e5e5e5;
+  --bms-seat-available: #3fc122;
+  --bms-seat-selected: #3fc122;
+  --bms-seat-sold: #b0b0b0;
+  --background: var(--bms-page);
+  --foreground: var(--bms-text);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-bms-red: var(--bms-red);
+  --color-bms-header: var(--bms-header);
+  --color-bms-page: var(--bms-page);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--bms-page);
+  color: var(--bms-text);
+  font-family: var(--font-geist-sans), system-ui, -apple-system, sans-serif;
+}
+
+@layer components {
+  .bms-cta {
+    @apply rounded-md bg-[var(--bms-red)] px-6 py-2.5 text-sm font-semibold text-white transition hover:bg-[var(--bms-red-hover)] disabled:cursor-not-allowed disabled:opacity-50;
+  }
+
+  .bms-card {
+    @apply rounded-lg border border-[var(--bms-border)] bg-white shadow-sm;
+  }
+
+  .bms-show-pill {
+    @apply rounded border border-[var(--bms-red)] bg-white px-4 py-2 text-sm font-semibold text-[var(--bms-red)] transition hover:bg-[var(--bms-red)] hover:text-white;
+  }
+
+  .bms-screen-curve {
+    @apply mx-auto mb-8 h-2 w-3/4 max-w-md rounded-t-full bg-gradient-to-b from-gray-300 to-gray-200 shadow-inner;
+  }
+
+  .bms-seat {
+    @apply h-7 w-7 rounded-sm text-[10px] font-medium transition-all disabled:cursor-not-allowed;
+  }
+
+  .bms-seat-available {
+    @apply border-2 border-[var(--bms-seat-available)] bg-white text-gray-700 hover:bg-green-50;
+  }
+
+  .bms-seat-selected {
+    @apply border-2 border-[var(--bms-seat-selected)] bg-[var(--bms-seat-selected)] text-white;
+  }
+
+  .bms-seat-sold {
+    @apply border-2 border-gray-300 bg-gray-200 text-gray-400;
+  }
+
+  .bms-ticket {
+    @apply relative overflow-hidden rounded-xl border border-[var(--bms-border)] bg-white shadow-md;
+  }
+
+  .bms-ticket-notch {
+    @apply absolute top-1/2 h-6 w-6 -translate-y-1/2 rounded-full bg-[var(--bms-page)];
+  }
+}

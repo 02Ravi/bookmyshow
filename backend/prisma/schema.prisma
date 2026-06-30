@@ -1,0 +1,164 @@
+generator client {
+  provider     = "prisma-client"
+  output       = "../src/generated/prisma"
+  moduleFormat = "cjs"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum SeatType {
+  REGULAR
+  PREMIUM
+  RECLINER
+}
+
+enum ShowSeatStatus {
+  AVAILABLE
+  HELD
+  BOOKED
+}
+
+enum ReservationStatus {
+  ACTIVE
+  EXPIRED
+  CONFIRMED
+  CANCELLED
+}
+
+enum BookingStatus {
+  CONFIRMED
+  CANCELLED
+}
+
+model User {
+  id           String        @id @default(uuid())
+  email        String        @unique
+  name         String
+  phone        String?
+  createdAt    DateTime      @default(now())
+  reservations Reservation[]
+  bookings     Booking[]
+}
+
+model Movie {
+  id              String   @id @default(uuid())
+  title           String
+  durationMinutes Int
+  language        String
+  genre           String
+  posterUrl       String
+  createdAt       DateTime @default(now())
+  shows           Show[]
+}
+
+model Theatre {
+  id        String   @id @default(uuid())
+  name      String
+  city      String
+  address   String
+  createdAt DateTime @default(now())
+  screens   Screen[]
+}
+
+model Screen {
+  id        String   @id @default(uuid())
+  theatreId String
+  name      String
+  createdAt DateTime @default(now())
+  theatre   Theatre  @relation(fields: [theatreId], references: [id])
+  seats     Seat[]
+  shows     Show[]
+}
+
+model Seat {
+  id        String   @id @default(uuid())
+  screenId  String
+  row       String
+  number    Int
+  type      SeatType
+  createdAt DateTime @default(now())
+  screen    Screen   @relation(fields: [screenId], references: [id])
+  showSeats ShowSeat[]
+
+  @@unique([screenId, row, number])
+}
+
+model Show {
+  id        String     @id @default(uuid())
+  movieId   String
+  screenId  String
+  startTime DateTime
+  endTime   DateTime
+  createdAt DateTime   @default(now())
+  movie     Movie      @relation(fields: [movieId], references: [id])
+  screen    Screen     @relation(fields: [screenId], references: [id])
+  showSeats ShowSeat[]
+
+  @@index([movieId])
+  @@index([startTime])
+}
+
+model ShowSeat {
+  id               String            @id @default(uuid())
+  showId           String
+  seatId           String
+  status           ShowSeatStatus
+  price            Decimal           @db.Decimal(10, 2)
+  version          Int               @default(0)
+  updatedAt        DateTime          @updatedAt
+  show             Show              @relation(fields: [showId], references: [id])
+  seat             Seat              @relation(fields: [seatId], references: [id])
+  reservationSeats ReservationSeat[]
+  bookingSeats     BookingSeat[]
+
+  @@unique([showId, seatId])
+  @@index([showId])
+  @@index([status])
+}
+
+model Reservation {
+  id               String            @id @default(uuid())
+  userId           String
+  status           ReservationStatus
+  expiresAt        DateTime
+  createdAt        DateTime          @default(now())
+  user             User              @relation(fields: [userId], references: [id])
+  reservationSeats ReservationSeat[]
+  booking          Booking?
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([status])
+}
+
+model ReservationSeat {
+  reservationId String
+  showSeatId    String
+  reservation   Reservation @relation(fields: [reservationId], references: [id])
+  showSeat      ShowSeat    @relation(fields: [showSeatId], references: [id])
+
+  @@id([reservationId, showSeatId])
+}
+
+model Booking {
+  id             String        @id @default(uuid())
+  userId         String
+  reservationId  String        @unique
+  status         BookingStatus
+  idempotencyKey String        @unique
+  createdAt      DateTime      @default(now())
+  user           User          @relation(fields: [userId], references: [id])
+  reservation    Reservation   @relation(fields: [reservationId], references: [id])
+  bookingSeats   BookingSeat[]
+}
+
+model BookingSeat {
+  bookingId  String
+  showSeatId String
+  booking    Booking  @relation(fields: [bookingId], references: [id])
+  showSeat   ShowSeat @relation(fields: [showSeatId], references: [id])
+
+  @@id([bookingId, showSeatId])
+}
