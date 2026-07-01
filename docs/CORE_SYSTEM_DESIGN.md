@@ -171,9 +171,10 @@ Before confirming, `BookingService` calls `isReservationExpired`. If expired, it
 
 `ReservationReconcileCron` runs on a configurable schedule (default: **every minute** via `RECONCILE_CRON_INTERVAL`):
 
-1. Query up to **100** reservations where `status = ACTIVE` and `expiresAt < now`.  
-2. For each, call `ReservationReconcileService.expireReservation`.  
-3. Per-reservation failures are logged; the batch continues.  
+1. Query up to **100** reservations (`RECONCILE_BATCH_SIZE`) where `status = ACTIVE` and `expiresAt < now`.
+2. For each candidate in the batch, call `ReservationReconcileService.expireReservation` concurrently.
+3. Per-reservation failures are logged; the batch continues.
+4. If the batch came back full (i.e. there may be more expired reservations left), repeat from step 1 within the same tick, so a large backlog drains in one run instead of trickling out one batch per minute.
 
 This handles:
 

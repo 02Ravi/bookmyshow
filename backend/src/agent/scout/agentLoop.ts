@@ -1,4 +1,5 @@
 import type { ModelMessage } from 'ai';
+import { AGENT_LOOP_MAX_STEPS } from '../../common/constants';
 import type { BookingToolsContext } from '../tools';
 
 async function loadAgentSdk() {
@@ -25,7 +26,7 @@ export async function runAgentLoop(params: {
     instructions: params.instructions,
     messages: params.messages,
     tools: createBookingTools(params.ctx),
-    stopWhen: isStepCount(2),
+    stopWhen: isStepCount(AGENT_LOOP_MAX_STEPS),
   });
 
   return {

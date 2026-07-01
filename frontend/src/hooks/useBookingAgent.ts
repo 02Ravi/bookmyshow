@@ -15,6 +15,7 @@ import {
   UiBlock,
   isInteractiveBlock,
 } from '@/types/agent';
+import type { SeatStatus } from '@/types/status';
 
 interface ChoiceGroupInput {
   type: 'choice_group';
@@ -38,7 +39,7 @@ interface SeatPickerInput {
     row: string;
     number: number;
     type: string;
-    status: 'AVAILABLE' | 'HELD' | 'BOOKED';
+    status: SeatStatus;
     price: number;
   }>;
   maxSelections?: number;

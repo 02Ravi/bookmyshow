@@ -1,7 +1,10 @@
 import { Injectable } from '@nestjs/common';
+import {
+  AGENT_SESSION_TTL_SECONDS,
+  AGENT_TURN_LOCK_TTL_SECONDS,
+} from '../../common/constants';
+import { agentLockKey, agentSessionKey } from '../../common/redis.keys';
 import { RedisService } from '../../redis/redis.service';
-
-const SESSION_TTL_SECONDS = 1800;
 
 export interface AgentStoredMessage {
   role: 'user' | 'assistant';
@@ -21,7 +24,7 @@ export interface AgentSession {
   /** True after cancel picker is shown; cleared when user picks a booking or changes intent. */
   awaitingCancelBookingPick: boolean;
   /** JSON array of showSeatId UUIDs awaiting profile before hold. */
-  pendingSeatIds: string | null;
+  pendingShowSeatIds: string | null;
   messages: AgentStoredMessage[];
 }
 
@@ -36,7 +39,7 @@ const EMPTY_SESSION: AgentSession = {
   showId: null,
   pendingCancelBookingId: null,
   awaitingCancelBookingPick: false,
-  pendingSeatIds: null,
+  pendingShowSeatIds: null,
   messages: [],
 };
 
@@ -65,7 +68,7 @@ export class SessionService {
       showId: values.showId || null,
       pendingCancelBookingId: values.pendingCancelBookingId || null,
       awaitingCancelBookingPick: values.awaitingCancelBookingPick === '1',
-      pendingSeatIds: values.pendingSeatIds || null,
+      pendingShowSeatIds: values.pendingShowSeatIds || null,
       messages: this.parseMessages(values.messages),
     };
   }
@@ -83,23 +86,16 @@ export class SessionService {
       showId: session.showId ?? '',
       pendingCancelBookingId: session.pendingCancelBookingId ?? '',
       awaitingCancelBookingPick: session.awaitingCancelBookingPick ? '1' : '',
-      pendingSeatIds: session.pendingSeatIds ?? '',
+      pendingShowSeatIds: session.pendingShowSeatIds ?? '',
       messages: JSON.stringify(session.messages),
     });
-    await this.redis.getClient().expire(key, SESSION_TTL_SECONDS);
+    await this.redis.getClient().expire(key, AGENT_SESSION_TTL_SECONDS);
   }
 
-  async appendMessages(
+  async acquireTurnLock(
     sessionId: string,
-    ...newMessages: AgentStoredMessage[]
-  ): Promise<AgentSession> {
-    const session = (await this.getSession(sessionId)) ?? this.createEmptySession();
-    session.messages.push(...newMessages);
-    await this.saveSession(sessionId, session);
-    return session;
-  }
-
-  async acquireTurnLock(sessionId: string, ttlSeconds = 30): Promise<boolean> {
+    ttlSeconds = AGENT_TURN_LOCK_TTL_SECONDS,
+  ): Promise<boolean> {
     const result = await this.redis
       .getClient()
       .set(this.getLockKey(sessionId), '1', 'EX', ttlSeconds, 'NX');
@@ -111,11 +107,11 @@ export class SessionService {
   }
 
   private getKey(sessionId: string): string {
-    return `agent:session:${sessionId}`;
+    return agentSessionKey(sessionId);
   }
 
   private getLockKey(sessionId: string): string {
-    return `agent:lock:${sessionId}`;
+    return agentLockKey(sessionId);
   }
 
   private parseMessages(raw: string | undefined): AgentStoredMessage[] {

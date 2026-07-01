@@ -1,5 +1,9 @@
 import { ConflictException } from '@nestjs/common';
-import { ShowSeatStatus } from '../../generated/prisma/client';
+import { BookingStatus, ShowSeatStatus } from '../../generated/prisma/client';
+import {
+  DEMO_FAST_HOLD_SECONDS,
+  MAX_TICKETS_SHOWN,
+} from '../../common/constants';
 import { AuthService } from '../../auth/service/auth.service';
 import { BookingService } from '../../booking/service/booking.service';
 import { CatalogService } from '../../catalog/service/catalog.service';
@@ -25,7 +29,7 @@ import {
   isProfileMessage,
   isSeatIdsMessage,
   isViewBookingsMessage,
-  parsePendingSeatIds,
+  parsePendingShowSeatIds,
   MovieChoiceSource,
   ShowChoiceSource,
   SeatChoiceSource,
@@ -271,7 +275,7 @@ async function buildViewBookingsTicketResponse(params: {
       const detail = await booking.findById(lastUserMessage.trim());
       if (
         detail.userId === session.userId &&
-        detail.status === 'CONFIRMED'
+        detail.status === BookingStatus.CONFIRMED
       ) {
         bookingIds = [detail.id];
       }
@@ -296,26 +300,32 @@ async function buildViewBookingsTicketResponse(params: {
   if (bookingIds.length === 0 && !uuidLookupAttempted) {
     const listed = await booking.findByUserId(session.userId);
     bookingIds = listed
-      .filter((item) => item.status === 'CONFIRMED')
+      .filter((item) => item.status === BookingStatus.CONFIRMED)
       .map((item) => item.id);
   }
 
-  const ticketCalls: Record<string, unknown>[] = [];
-
-  for (const bookingId of bookingIds.slice(0, 5)) {
-    try {
-      const detail = await booking.findById(bookingId);
-      if (detail.userId !== session.userId || detail.status !== 'CONFIRMED') {
-        continue;
+  const fetchedTicketCalls = await Promise.all(
+    bookingIds.slice(0, MAX_TICKETS_SHOWN).map(async (bookingId) => {
+      try {
+        const detail = await booking.findById(bookingId);
+        if (
+          detail.userId !== session.userId ||
+          detail.status !== BookingStatus.CONFIRMED
+        ) {
+          return null;
+        }
+        const ticket = buildTicketMarkdownInput(
+          bookingDetailToTicketSource(detail),
+        );
+        return buildSyntheticUiMarkdownCall(ticket);
+      } catch {
+        return null;
       }
-      const ticket = buildTicketMarkdownInput(
-        bookingDetailToTicketSource(detail),
-      );
-      ticketCalls.push(buildSyntheticUiMarkdownCall(ticket));
-    } catch {
-      continue;
-    }
-  }
+    }),
+  );
+  const ticketCalls = fetchedTicketCalls.filter(
+    (call): call is Record<string, unknown> => call !== null,
+  );
 
   if (ticketCalls.length === 0) {
     return {
@@ -339,7 +349,7 @@ function parseListBookings(result: unknown) {
     if (typeof booking.bookingId !== 'string') return [];
     if (typeof booking.movieTitle !== 'string') return [];
     if (!booking.showTime) return [];
-    if (booking.status !== 'CONFIRMED') return [];
+    if (booking.status !== BookingStatus.CONFIRMED) return [];
     return [
       {
         id: booking.bookingId,
@@ -448,8 +458,11 @@ function collectStepExecutions(steps: unknown): Array<{
 }> {
   if (!Array.isArray(steps)) return [];
 
-  const executions: Array<{ toolName: string; input: unknown; result: unknown }> =
-    [];
+  const executions: Array<{
+    toolName: string;
+    input: unknown;
+    result: unknown;
+  }> = [];
 
   for (const step of steps as AgentStep[]) {
     const toolCalls = step.toolCalls ?? [];
@@ -508,7 +521,8 @@ function parseShows(result: unknown): ShowChoiceSource[] {
     if (!isRecord(show)) return [];
     if (
       typeof show.id !== 'string' ||
-      (typeof show.startTime !== 'string' && !(show.startTime instanceof Date)) ||
+      (typeof show.startTime !== 'string' &&
+        !(show.startTime instanceof Date)) ||
       typeof show.theatreName !== 'string' ||
       typeof show.availableSeats !== 'number'
     ) {
@@ -517,7 +531,7 @@ function parseShows(result: unknown): ShowChoiceSource[] {
     return [
       {
         id: show.id,
-        startTime: show.startTime as string | Date,
+        startTime: show.startTime,
         theatreName: show.theatreName,
         screenName:
           typeof show.screenName === 'string' ? show.screenName : undefined,
@@ -599,7 +613,7 @@ function parseBookingResult(result: unknown) {
   };
 }
 
-function parseSeatIdsFromMessage(message: string): string[] {
+function parseShowSeatIdsFromMessage(message: string): string[] {
   if (!isSeatIdsMessage(message)) return [];
 
   try {
@@ -612,12 +626,12 @@ function parseSeatIdsFromMessage(message: string): string[] {
   }
 }
 
-function parseHoldSeatIds(
+function parseHoldShowSeatIds(
   lastUserMessage: string,
   holdSeatsExecution: { input: unknown } | null,
   toolCalls: unknown[],
 ): string[] {
-  const fromMessage = parseSeatIdsFromMessage(lastUserMessage);
+  const fromMessage = parseShowSeatIdsFromMessage(lastUserMessage);
   if (fromMessage.length > 0) return fromMessage;
 
   const holdInput =
@@ -637,7 +651,7 @@ async function tryCompleteHold(params: {
   holdSeatsExecution: { input: unknown; result: unknown } | null;
   toolCalls: unknown[];
   reservation: ReservationService;
-  seatIdsOverride?: string[];
+  showSeatIdsOverride?: string[];
 }): Promise<{ seatsHeld: number; expiresAt?: Date } | null> {
   const {
     session,
@@ -645,7 +659,7 @@ async function tryCompleteHold(params: {
     holdSeatsExecution,
     toolCalls,
     reservation,
-    seatIdsOverride,
+    showSeatIdsOverride,
   } = params;
 
   if (session.reservationId) {
@@ -654,20 +668,20 @@ async function tryCompleteHold(params: {
       const expiresAt =
         typeof holdResult.expiresAt === 'string' ||
         holdResult.expiresAt instanceof Date
-          ? new Date(holdResult.expiresAt as string | Date)
+          ? new Date(holdResult.expiresAt)
           : undefined;
       return { seatsHeld: holdResult.seatsHeld, expiresAt };
     }
 
-    const seatIds =
-      seatIdsOverride ??
-      parseHoldSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
-    return { seatsHeld: seatIds.length > 0 ? seatIds.length : 1 };
+    const showSeatIds =
+      showSeatIdsOverride ??
+      parseHoldShowSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
+    return { seatsHeld: showSeatIds.length > 0 ? showSeatIds.length : 1 };
   }
 
-  const seatIds =
-    seatIdsOverride ??
-    parseHoldSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
+  const showSeatIds =
+    showSeatIdsOverride ??
+    parseHoldShowSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
   const holdInput =
     holdSeatsExecution?.input ?? findToolCallInput(toolCalls, 'holdSeats');
   const showId =
@@ -676,23 +690,25 @@ async function tryCompleteHold(params: {
       ? holdInput.showId
       : null);
 
-  if (!session.userId || !showId || seatIds.length === 0) {
+  if (!session.userId || !showId || showSeatIds.length === 0) {
     return null;
   }
 
   try {
     const holdDurationSeconds =
-      process.env.DEMO_FAST_HOLD === 'true' ? 10 : undefined;
+      process.env.DEMO_FAST_HOLD === 'true'
+        ? DEMO_FAST_HOLD_SECONDS
+        : undefined;
     const created = await reservation.create({
       userId: session.userId,
       showId,
-      showSeatIds: seatIds,
+      showSeatIds,
       holdDurationSeconds,
     });
 
     session.reservationId = created.id;
     session.showId = showId;
-    session.pendingSeatIds = null;
+    session.pendingShowSeatIds = null;
 
     return {
       seatsHeld: created.showSeatIds.length,
@@ -808,7 +824,41 @@ function promptMessage(prompt: UiPromptToolCall): string {
   return typeof message === 'string' ? message : '';
 }
 
-export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResult> {
+type Execution = { toolName: string; input: unknown; result: unknown };
+
+/** Shared read-only turn context plus mutable session, threaded through every rule handler in order. */
+interface RuleContext {
+  session: AgentSession;
+  lastUserMessage: string;
+  catalog: CatalogService;
+  reservation: ReservationService;
+  booking: BookingService;
+  sessionId: string;
+  toolCalls: unknown[];
+  text: string;
+  executions: Execution[];
+  listMoviesExecution: Execution | null;
+  listShowsExecution: Execution | null;
+  getSeatMapExecution: Execution | null;
+  holdSeatsExecution: Execution | null;
+  confirmBookingExecution: Execution | null;
+  listBookingsExecution: Execution | null;
+  getBookingExecution: Execution | null;
+  cancelBookingExecution: Execution | null;
+  isDateMessage: boolean;
+  isUuidMessage: boolean;
+  isShowUuidMessage: boolean;
+  isCancelMessage: boolean;
+  isConfirmMessage: boolean;
+  isCancelFlowActive: boolean;
+  shouldAttemptHold: boolean;
+}
+
+type RuleHandler = (
+  ctx: RuleContext,
+) => Promise<EnrichResult | null> | EnrichResult | null;
+
+function buildRuleContext(params: EnrichParams): RuleContext {
   const {
     loopResult,
     session,
@@ -819,8 +869,8 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     sessionId,
   } = params;
   const executions = collectStepExecutions(loopResult.steps);
-  let toolCalls = [...loopResult.toolCalls];
-  let text = loopResult.text.trim();
+  const toolCalls = [...loopResult.toolCalls];
+  const text = loopResult.text.trim();
 
   const listMoviesExecution = findExecution(executions, 'listMovies');
   const listShowsExecution = findExecution(executions, 'listShows');
@@ -850,9 +900,48 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     Boolean(session.pendingCancelBookingId) ||
     Boolean(session.awaitingCancelBookingPick);
 
-  // Rule 1: movie dropdown after listMovies
+  const shouldAttemptHold =
+    isSeatIdsMessage(lastUserMessage) ||
+    Boolean(holdSeatsExecution) ||
+    Boolean(findToolCallInput(toolCalls, 'holdSeats'));
+
+  return {
+    session,
+    lastUserMessage,
+    catalog,
+    reservation,
+    booking,
+    sessionId,
+    toolCalls,
+    text,
+    executions,
+    listMoviesExecution,
+    listShowsExecution,
+    getSeatMapExecution,
+    holdSeatsExecution,
+    confirmBookingExecution,
+    listBookingsExecution,
+    getBookingExecution,
+    cancelBookingExecution,
+    isDateMessage,
+    isUuidMessage,
+    isShowUuidMessage,
+    isCancelMessage,
+    isConfirmMessage,
+    isCancelFlowActive,
+    shouldAttemptHold,
+  };
+}
+
+// Rule 1: movie dropdown after listMovies
+async function handleMovieDropdownRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { toolCalls, executions, session, catalog, listMoviesExecution } = ctx;
+
   if (
-    (listMoviesExecution?.result || findToolCallInput(toolCalls, 'listMovies')) &&
+    (listMoviesExecution?.result ||
+      findToolCallInput(toolCalls, 'listMovies')) &&
     !hasUiPromptOfType('choice_group', toolCalls, executions) &&
     !session.movieId
   ) {
@@ -870,8 +959,16 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Safety net for sessions where the model returns an empty turn instead of
-  // calling listMovies after the user asks what is available.
+  return null;
+}
+
+// Safety net for sessions where the model returns an empty turn instead of
+// calling listMovies after the user asks what is available.
+async function handleEmptyTurnMovieBrowseSafetyNet(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { text, toolCalls, session, lastUserMessage, catalog } = ctx;
+
   if (
     !text &&
     toolCalls.length === 0 &&
@@ -888,7 +985,25 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 13: view bookings — full ticket markdown cards
+  return null;
+}
+
+// Rule 13: view bookings — full ticket markdown cards
+async function handleViewBookingsRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    session,
+    lastUserMessage,
+    booking,
+    listBookingsExecution,
+    getBookingExecution,
+    isUuidMessage,
+    isDateMessage,
+    isShowUuidMessage,
+    isCancelFlowActive,
+  } = ctx;
+
   const shouldViewBookings =
     session.userId &&
     !isCancelBookingMessage(lastUserMessage) &&
@@ -916,7 +1031,22 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 9: booking cancel picker
+  return null;
+}
+
+// Rule 9: booking cancel picker
+async function handleCancelPickerRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    session,
+    lastUserMessage,
+    toolCalls,
+    executions,
+    listBookingsExecution,
+    booking,
+  } = ctx;
+
   if (
     session.userId &&
     isCancelBookingMessage(lastUserMessage) &&
@@ -930,7 +1060,7 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
       listed.length > 0
         ? listed
         : (await booking.findByUserId(session.userId))
-            .filter((item) => item.status === 'CONFIRMED')
+            .filter((item) => item.status === BookingStatus.CONFIRMED)
             .map((item) => ({
               id: item.id,
               movieTitle: item.show.movie.title,
@@ -953,7 +1083,22 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     };
   }
 
-  // Rule 10: booking UUID -> cancel confirm (only during active cancel flow)
+  return null;
+}
+
+// Rule 10: booking UUID -> cancel confirm (only during active cancel flow)
+async function handleCancelConfirmRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    isUuidMessage,
+    isDateMessage,
+    session,
+    lastUserMessage,
+    isCancelFlowActive,
+    booking,
+  } = ctx;
+
   if (
     isUuidMessage &&
     !isDateMessage &&
@@ -966,7 +1111,7 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
       const bookingDetail = await booking.findById(lastUserMessage.trim());
       if (
         bookingDetail.userId === session.userId &&
-        bookingDetail.status === 'CONFIRMED'
+        bookingDetail.status === BookingStatus.CONFIRMED
       ) {
         session.pendingCancelBookingId = bookingDetail.id;
         session.awaitingCancelBookingPick = false;
@@ -984,12 +1129,25 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 2: date chips after movie UUID selection (one picker only)
-  if (
-    isUuidMessage &&
-    !isDateMessage &&
-    !isShowUuidMessage
-  ) {
+  return null;
+}
+
+// Rule 2: date chips after movie UUID selection (one picker only)
+async function handleDateChipsAfterMovieRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    isUuidMessage,
+    isDateMessage,
+    isShowUuidMessage,
+    catalog,
+    session,
+    lastUserMessage,
+    toolCalls,
+    executions,
+  } = ctx;
+
+  if (isUuidMessage && !isDateMessage && !isShowUuidMessage) {
     try {
       const movie = await catalog.findMovieById(lastUserMessage.trim());
       session.movieId = movie.id;
@@ -1018,7 +1176,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 2b: natural-language date browse ("any other date?")
+  return null;
+}
+
+// Rule 2b: natural-language date browse ("any other date?")
+async function handleDateBrowseRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { session, lastUserMessage, toolCalls, executions, catalog } = ctx;
+
   if (
     session.movieId &&
     !session.reservationId &&
@@ -1026,7 +1192,10 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     isDateBrowseMessage(lastUserMessage) &&
     !hasDateChipPickerInTurn(toolCalls, executions)
   ) {
-    const dateResponse = await buildDatePickerResponse(catalog, session.movieId);
+    const dateResponse = await buildDatePickerResponse(
+      catalog,
+      session.movieId,
+    );
     if (dateResponse) {
       return dateResponse;
     }
@@ -1037,7 +1206,23 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     };
   }
 
-  // Rule 3 & 4: showtime dropdown after date + listShows (or fetch shows directly)
+  return null;
+}
+
+// Rule 3 & 4: showtime dropdown after date + listShows (or fetch shows directly)
+async function handleShowtimeDropdownRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    session,
+    isShowUuidMessage,
+    isDateMessage,
+    listShowsExecution,
+    toolCalls,
+    executions,
+    catalog,
+  } = ctx;
+
   const shouldOfferShows =
     session.movieId &&
     session.selectedDate &&
@@ -1086,22 +1271,32 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 5.7: profile submitted — complete pending hold when seats were selected earlier
+  return null;
+}
+
+// Rule 5.7: profile submitted — complete pending hold when seats were selected earlier
+async function handleProfileSubmittedHoldRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { session, lastUserMessage, toolCalls, reservation, catalog } = ctx;
+
   if (
     isProfileMessage(lastUserMessage) &&
     hasSessionIdentity(session) &&
     !session.reservationId &&
     session.showId
   ) {
-    const pendingSeatIds = parsePendingSeatIds(session.pendingSeatIds);
-    if (pendingSeatIds.length > 0) {
+    const pendingShowSeatIds = parsePendingShowSeatIds(
+      session.pendingShowSeatIds,
+    );
+    if (pendingShowSeatIds.length > 0) {
       const holdDetails = await tryCompleteHold({
         session,
         lastUserMessage,
         holdSeatsExecution: null,
         toolCalls,
         reservation,
-        seatIdsOverride: pendingSeatIds,
+        showSeatIdsOverride: pendingShowSeatIds,
       });
 
       if (holdDetails) {
@@ -1123,7 +1318,7 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
           refreshedSeats,
           'One or more seats are no longer available. Pick another seat.',
         );
-        session.pendingSeatIds = null;
+        session.pendingShowSeatIds = null;
         return {
           toolCalls: [buildSyntheticUiPromptCall(prompt)],
           text: promptMessage(prompt),
@@ -1132,26 +1327,33 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 6: confirm after successful hold
-  const shouldAttemptHold =
-    isSeatIdsMessage(lastUserMessage) ||
-    Boolean(holdSeatsExecution) ||
-    Boolean(findToolCallInput(toolCalls, 'holdSeats'));
+  return null;
+}
 
-  // Rule 5.8: seat selection without profile — collect contact details first
+// Rule 5.8: seat selection without profile — collect contact details first
+function handleSeatSelectionProfileRule(ctx: RuleContext): EnrichResult | null {
+  const {
+    shouldAttemptHold,
+    session,
+    toolCalls,
+    executions,
+    lastUserMessage,
+    holdSeatsExecution,
+  } = ctx;
+
   if (
     shouldAttemptHold &&
     !hasSessionIdentity(session) &&
     !hasUiPromptOfType('profile_form', toolCalls, executions) &&
     !isProfileMessage(lastUserMessage)
   ) {
-    const seatIds = parseHoldSeatIds(
+    const showSeatIds = parseHoldShowSeatIds(
       lastUserMessage,
       holdSeatsExecution,
       toolCalls,
     );
-    if (seatIds.length > 0) {
-      session.pendingSeatIds = JSON.stringify(seatIds);
+    if (showSeatIds.length > 0) {
+      session.pendingShowSeatIds = JSON.stringify(showSeatIds);
     }
 
     const prompt = buildProfileFormInput(
@@ -1162,6 +1364,25 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
       text: promptMessage(prompt),
     };
   }
+
+  return null;
+}
+
+// Rule 6: confirm after successful hold
+async function handleHoldCompletionRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const {
+    shouldAttemptHold,
+    toolCalls,
+    executions,
+    isConfirmMessage,
+    isCancelMessage,
+    session,
+    lastUserMessage,
+    holdSeatsExecution,
+    reservation,
+  } = ctx;
 
   if (
     shouldAttemptHold &&
@@ -1189,7 +1410,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 6b: hold failure -> refreshed seat picker
+  return null;
+}
+
+// Rule 6b: hold failure -> refreshed seat picker
+async function handleHoldFailureRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { holdSeatsExecution, session, catalog } = ctx;
+
   if (
     holdSeatsExecution?.result &&
     isRecord(holdSeatsExecution.result) &&
@@ -1214,6 +1443,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
+  return null;
+}
+
+// Stale hold cleanup: seats were selected but the refreshed seat map wasn't shown yet
+async function handleStaleSeatPickerRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { shouldAttemptHold, session, toolCalls, executions, catalog } = ctx;
+
   if (
     shouldAttemptHold &&
     hasSessionIdentity(session) &&
@@ -1236,7 +1474,13 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 8: cancel releases hold and restarts seat selection
+  return null;
+}
+
+// Rule 8 (abort branch): cancel message aborts a pending booking cancellation
+function handleCancelAbortRule(ctx: RuleContext): EnrichResult | null {
+  const { isCancelMessage, session, toolCalls } = ctx;
+
   if (
     isCancelMessage &&
     session.pendingCancelBookingId &&
@@ -1249,6 +1493,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
       text: 'Booking cancellation aborted.',
     };
   }
+
+  return null;
+}
+
+// Rule 8 (hold branch): cancel releases the active hold and restarts seat selection
+async function handleCancelActiveReservationRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { isCancelMessage, session, reservation, catalog } = ctx;
 
   if (isCancelMessage && session.reservationId && session.showId) {
     if (session.reservationId) {
@@ -1270,7 +1523,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 5: seat picker after getSeatMap
+  return null;
+}
+
+// Rule 5: seat picker after getSeatMap
+function handleSeatPickerAfterGetSeatMapRule(
+  ctx: RuleContext,
+): EnrichResult | null {
+  const { getSeatMapExecution, session, toolCalls, executions } = ctx;
+
   if (
     getSeatMapExecution?.result &&
     !session.reservationId &&
@@ -1286,7 +1547,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 11: confirm cancels pending booking
+  return null;
+}
+
+// Rule 11: confirm cancels pending booking
+async function handleConfirmCancelPendingBookingRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { isConfirmMessage, session, booking } = ctx;
+
   if (
     isConfirmMessage &&
     session.pendingCancelBookingId &&
@@ -1302,7 +1571,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 12: ticket after cancelBooking tool execution
+  return null;
+}
+
+// Rule 12: ticket after cancelBooking tool execution
+function handleCancelBookingExecutedRule(
+  ctx: RuleContext,
+): EnrichResult | null {
+  const { cancelBookingExecution } = ctx;
+
   if (cancelBookingExecution?.result) {
     const cancelled = parseCancelBookingResult(cancelBookingExecution.result);
     if (cancelled) {
@@ -1314,7 +1591,15 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Rule 7: ticket after confirmBooking (or enricher fallback on confirm message)
+  return null;
+}
+
+// Rule 7: ticket after confirmBooking (or enricher fallback on confirm message)
+function handleConfirmBookingExecutedRule(
+  ctx: RuleContext,
+): EnrichResult | null {
+  const { confirmBookingExecution } = ctx;
+
   if (confirmBookingExecution?.result) {
     const bookingResult = parseBookingResult(confirmBookingExecution.result);
     if (bookingResult) {
@@ -1325,6 +1610,14 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
       };
     }
   }
+
+  return null;
+}
+
+async function handleConfirmMessageCompleteBookingRule(
+  ctx: RuleContext,
+): Promise<EnrichResult | null> {
+  const { isConfirmMessage, session, sessionId, booking } = ctx;
 
   if (isConfirmMessage && session.reservationId) {
     const bookingResult = await tryCompleteBooking({
@@ -1341,7 +1634,13 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  // Fallback: listShows ran with a selected date but show picker was skipped
+  return null;
+}
+
+// Fallback: listShows ran with a selected date but show picker was skipped
+function handleShowPickerFallbackRule(ctx: RuleContext): EnrichResult | null {
+  const { listShowsExecution, session, toolCalls, executions } = ctx;
+
   if (
     listShowsExecution?.result &&
     session.selectedDate &&
@@ -1357,5 +1656,44 @@ export async function enrichToolCalls(params: EnrichParams): Promise<EnrichResul
     }
   }
 
-  return { toolCalls, text };
+  return null;
+}
+
+const RULE_HANDLERS: RuleHandler[] = [
+  handleMovieDropdownRule,
+  handleEmptyTurnMovieBrowseSafetyNet,
+  handleViewBookingsRule,
+  handleCancelPickerRule,
+  handleCancelConfirmRule,
+  handleDateChipsAfterMovieRule,
+  handleDateBrowseRule,
+  handleShowtimeDropdownRule,
+  handleProfileSubmittedHoldRule,
+  handleSeatSelectionProfileRule,
+  handleHoldCompletionRule,
+  handleHoldFailureRule,
+  handleStaleSeatPickerRule,
+  handleCancelAbortRule,
+  handleCancelActiveReservationRule,
+  handleSeatPickerAfterGetSeatMapRule,
+  handleConfirmCancelPendingBookingRule,
+  handleCancelBookingExecutedRule,
+  handleConfirmBookingExecutedRule,
+  handleConfirmMessageCompleteBookingRule,
+  handleShowPickerFallbackRule,
+];
+
+export async function enrichToolCalls(
+  params: EnrichParams,
+): Promise<EnrichResult> {
+  const ctx = buildRuleContext(params);
+
+  for (const handler of RULE_HANDLERS) {
+    const result = await handler(ctx);
+    if (result) {
+      return result;
+    }
+  }
+
+  return { toolCalls: ctx.toolCalls, text: ctx.text };
 }

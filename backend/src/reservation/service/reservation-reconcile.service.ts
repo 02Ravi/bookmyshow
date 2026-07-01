@@ -15,7 +15,8 @@ export class ReservationReconcileService {
     private readonly realtime: RealtimeService,
   ) {}
 
-  async expireReservation(reservationId: string): Promise<void> {
+  /** Transitions an ACTIVE reservation to EXPIRED and releases its held seats. Returns whether a transition actually happened. */
+  async expireReservation(reservationId: string): Promise<boolean> {
     const reservation = await this.prisma.reservation.findUnique({
       where: { id: reservationId },
       include: {
@@ -26,7 +27,7 @@ export class ReservationReconcileService {
     });
 
     if (!reservation || reservation.status !== ReservationStatus.ACTIVE) {
-      return;
+      return false;
     }
 
     const heldShowSeatIds = reservation.reservationSeats
@@ -74,5 +75,7 @@ export class ReservationReconcileService {
     for (const { showId, seatId } of releases) {
       this.realtime.emitSeatReleased(showId, seatId);
     }
+
+    return true;
   }
 }

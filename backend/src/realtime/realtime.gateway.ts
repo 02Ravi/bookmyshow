@@ -4,6 +4,7 @@ import {
   WebSocketServer,
 } from '@nestjs/websockets';
 import { Server, Socket } from 'socket.io';
+import { showRoomKey } from '../common/redis.keys';
 
 @WebSocketGateway({ cors: { origin: '*' } })
 export class RealtimeGateway {
@@ -12,11 +13,11 @@ export class RealtimeGateway {
 
   @SubscribeMessage('join-show')
   handleJoinShow(client: Socket, showId: string) {
-    client.join(`show:${showId}`);
+    client.join(showRoomKey(showId));
   }
 
   @SubscribeMessage('leave-show')
   handleLeaveShow(client: Socket, showId: string) {
-    client.leave(`show:${showId}`);
+    client.leave(showRoomKey(showId));
   }
 }

@@ -1,6 +1,7 @@
 import { api } from '@/lib/api';
+import type { SeatStatus } from '@/types/status';
 
-export type SeatStatus = 'AVAILABLE' | 'HELD' | 'BOOKED';
+export type { SeatStatus };
 export type SeatType = 'REGULAR' | 'PREMIUM' | 'RECLINER';
 
 export interface ShowSeat {

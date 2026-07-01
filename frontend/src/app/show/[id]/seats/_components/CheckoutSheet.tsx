@@ -10,8 +10,12 @@ import {
   type ShowSeat,
 } from '@/lib/booking-api';
 import { extractApiError, extractApiStatus } from '@/lib/api';
+import { messageForStatus } from '@/lib/http-status-messages';
 import { upsertUser } from '@/lib/movies-api';
+import { formatCountdown, getSecondsUntilExpiry } from '@/lib/reservation-expiry';
 import { useAuthStore } from '@/stores/authStore';
+
+const DEMO_FAST_HOLD_SECONDS = 10;
 
 interface CheckoutSheetProps {
   showId: string;
@@ -24,20 +28,10 @@ interface CheckoutSheetProps {
 }
 
 function getDemoHoldDurationSeconds(): number | undefined {
-  return process.env.NEXT_PUBLIC_DEMO_FAST_HOLD === 'true' ? 10 : undefined;
+  return process.env.NEXT_PUBLIC_DEMO_FAST_HOLD === 'true'
+    ? DEMO_FAST_HOLD_SECONDS
+    : undefined;
 }
-
-function formatCountdown(seconds: number): string {
-  const clamped = Math.max(0, seconds);
-  const minutes = Math.floor(clamped / 60);
-  const secs = clamped % 60;
-  return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
-}
-
-const STATUS_MESSAGES: Partial<Record<number, string>> = {
-  409: 'One or more seats you selected have already been booked. Please go back and choose different seats.',
-  410: 'Your reservation has expired. Please select seats again.',
-};
 
 export function CheckoutSheet({
   showId,
@@ -109,9 +103,7 @@ export function CheckoutSheet({
     if (phase !== 'paying' || !expiresAt) return;
 
     const updateCountdown = () => {
-      const secs = Math.floor(
-        (new Date(expiresAt).getTime() - Date.now()) / 1000,
-      );
+      const secs = getSecondsUntilExpiry(expiresAt);
       setSecondsLeft(secs);
       if (secs <= 0) {
         void doCancel('expired');
@@ -163,7 +155,7 @@ export function CheckoutSheet({
     onError: (err) => {
       holdInFlightRef.current = false;
       const status = extractApiStatus(err);
-      setError(extractApiError(err, STATUS_MESSAGES[status ?? 0] ?? 'Something went wrong. Please try again.'));
+      setError(extractApiError(err, messageForStatus(status)));
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
       if (status === 409 || status === 410) {
         setSeatsUnavailableError(true);
@@ -198,7 +190,7 @@ export function CheckoutSheet({
     onError: (err) => {
       payInFlightRef.current = false;
       const status = extractApiStatus(err);
-      setError(extractApiError(err, STATUS_MESSAGES[status ?? 0] ?? 'Something went wrong. Please try again.'));
+      setError(extractApiError(err, messageForStatus(status)));
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
       if (status === 409 || status === 410) {
         setSeatsUnavailableError(true);

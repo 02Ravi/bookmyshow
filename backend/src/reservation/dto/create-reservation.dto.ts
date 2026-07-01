@@ -7,6 +7,10 @@ import {
   Max,
   Min,
 } from 'class-validator';
+import {
+  HOLD_TTL_MAX_SECONDS,
+  HOLD_TTL_MIN_SECONDS,
+} from '../../common/constants';
 
 export class CreateReservationDto {
   @IsUUID()
@@ -22,7 +26,7 @@ export class CreateReservationDto {
 
   @IsOptional()
   @IsInt()
-  @Min(5)
-  @Max(600)
+  @Min(HOLD_TTL_MIN_SECONDS)
+  @Max(HOLD_TTL_MAX_SECONDS)
   holdDurationSeconds?: number;
 }

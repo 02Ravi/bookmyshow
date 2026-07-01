@@ -7,14 +7,13 @@ import {
   ReservationStatus,
   ShowSeatStatus,
 } from '../../generated/prisma/client';
+import { HOLD_TTL_SECONDS } from '../../common/constants';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { CreateReservationDto } from '../dto/create-reservation.dto';
 import { ReservationResponseDto } from '../dto/reservation-response.dto';
 import { ReservationReconcileService } from './reservation-reconcile.service';
-
-const HOLD_TTL_SECONDS = 600;
 
 @Injectable()
 export class ReservationService {
@@ -76,7 +75,9 @@ export class ReservationService {
         });
 
         if (updated.count !== 1) {
-          throw new ConflictException(`Seat ${showSeat.id} is no longer available`);
+          throw new ConflictException(
+            `Seat ${showSeat.id} is no longer available`,
+          );
         }
       }
 
@@ -90,11 +91,7 @@ export class ReservationService {
     );
 
     for (const showSeat of showSeats) {
-      this.realtime.emitSeatHeld(
-        dto.showId,
-        showSeat.seatId,
-        reservation.id,
-      );
+      this.realtime.emitSeatHeld(dto.showId, showSeat.seatId, reservation.id);
     }
 
     return {
@@ -125,6 +122,12 @@ export class ReservationService {
       throw new ConflictException(`Reservation is ${reservation.status}`);
     }
 
-    await this.reservationReconcile.expireReservation(reservationId);
+    const transitioned =
+      await this.reservationReconcile.expireReservation(reservationId);
+    if (!transitioned) {
+      throw new ConflictException(
+        `Reservation ${reservationId} could not be cancelled (already transitioned)`,
+      );
+    }
   }
 }

@@ -1,21 +1,13 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
-import { Prisma } from '../../generated/prisma/client';
+import { Movie, Prisma, Theatre } from '../../generated/prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListShowsQueryDto } from '../dto/list-shows-query.dto';
-import {
-  MovieResponseDto,
-  toMovieResponse,
-} from '../dto/movie-response.dto';
 import {
   ShowDetailDto,
   ShowListItemDto,
   toShowDetail,
   toShowListItem,
 } from '../dto/show-response.dto';
-import {
-  TheatreResponseDto,
-  toTheatreResponse,
-} from '../dto/theatre-response.dto';
 import {
   ShowSeatResponseDto,
   toShowSeatResponse,
@@ -25,26 +17,24 @@ import {
 export class CatalogService {
   constructor(private readonly prisma: PrismaService) {}
 
-  async findAllMovies(): Promise<MovieResponseDto[]> {
-    const movies = await this.prisma.movie.findMany({
+  async findAllMovies(): Promise<Movie[]> {
+    return this.prisma.movie.findMany({
       orderBy: { title: 'asc' },
     });
-    return movies.map(toMovieResponse);
   }
 
-  async findMovieById(id: string): Promise<MovieResponseDto> {
+  async findMovieById(id: string): Promise<Movie> {
     const movie = await this.prisma.movie.findUnique({ where: { id } });
     if (!movie) {
       throw new NotFoundException(`Movie ${id} not found`);
     }
-    return toMovieResponse(movie);
+    return movie;
   }
 
-  async findAllTheatres(): Promise<TheatreResponseDto[]> {
-    const theatres = await this.prisma.theatre.findMany({
+  async findAllTheatres(): Promise<Theatre[]> {
+    return this.prisma.theatre.findMany({
       orderBy: { name: 'asc' },
     });
-    return theatres.map(toTheatreResponse);
   }
 
   async findShows(query: ListShowsQueryDto): Promise<ShowListItemDto[]> {

@@ -26,9 +26,7 @@ export class BookingController {
     @Res({ passthrough: true }) res: Response,
   ) {
     const result = await this.bookingService.createFromReservation(dto);
-    res.status(
-      result.wasCreated ? HttpStatus.CREATED : HttpStatus.OK,
-    );
+    res.status(result.statusCode);
     return result.booking;
   }
 

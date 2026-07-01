@@ -1,12 +1,3 @@
-import {
-  MovieResponseDto,
-  toMovieResponse,
-} from './movie-response.dto';
-import {
-  TheatreResponseDto,
-  toTheatreResponse,
-} from './theatre-response.dto';
-
 export interface ShowListItemDto {
   id: string;
   startTime: Date;
@@ -19,15 +10,33 @@ export interface ShowListItemDto {
   screenName: string;
 }
 
+export interface ShowDetailMovieDto {
+  id: string;
+  title: string;
+  durationMinutes: number;
+  language: string;
+  genre: string;
+  posterUrl: string;
+  createdAt: Date;
+}
+
+export interface ShowDetailTheatreDto {
+  id: string;
+  name: string;
+  city: string;
+  address: string;
+  createdAt: Date;
+}
+
 export interface ShowDetailDto {
   id: string;
   startTime: Date;
   endTime: Date;
-  movie: MovieResponseDto;
+  movie: ShowDetailMovieDto;
   screen: {
     id: string;
     name: string;
-    theatre: TheatreResponseDto;
+    theatre: ShowDetailTheatreDto;
   };
 }
 
@@ -59,36 +68,22 @@ export function toShowDetail(show: {
   id: string;
   startTime: Date;
   endTime: Date;
-  movie: {
-    id: string;
-    title: string;
-    durationMinutes: number;
-    language: string;
-    genre: string;
-    posterUrl: string;
-    createdAt: Date;
-  };
+  movie: ShowDetailMovieDto;
   screen: {
     id: string;
     name: string;
-    theatre: {
-      id: string;
-      name: string;
-      city: string;
-      address: string;
-      createdAt: Date;
-    };
+    theatre: ShowDetailTheatreDto;
   };
 }): ShowDetailDto {
   return {
     id: show.id,
     startTime: show.startTime,
     endTime: show.endTime,
-    movie: toMovieResponse(show.movie),
+    movie: { ...show.movie },
     screen: {
       id: show.screen.id,
       name: show.screen.name,
-      theatre: toTheatreResponse(show.screen.theatre),
+      theatre: { ...show.screen.theatre },
     },
   };
 }

@@ -1,3 +1,5 @@
+import type { SeatStatus } from './status';
+
 export type MessageRole = 'user' | 'assistant';
 
 export type ChoiceOption = {
@@ -29,7 +31,7 @@ export type UiBlock =
         row: string;
         number: number;
         type: string;
-        status: 'AVAILABLE' | 'HELD' | 'BOOKED';
+        status: SeatStatus;
         price: number;
       }>;
       maxSelections: number;

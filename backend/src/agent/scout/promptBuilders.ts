@@ -1,4 +1,5 @@
 import { ShowSeatStatus } from '../../generated/prisma/client';
+import { UUID_PATTERN } from '../../common/uuid';
 
 export interface UiPromptToolCall {
   toolName: 'uiPrompt';
@@ -154,8 +155,7 @@ export function buildSeatPickerInput(
 }
 
 export const DATE_MESSAGE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
-export const UUID_PATTERN =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+export { UUID_PATTERN };
 
 export function isSeatIdsMessage(message: string): boolean {
   const trimmed = message.trim();
@@ -214,11 +214,7 @@ export function parseProfileMessage(message: string): ProfilePayload | null {
   }
 }
 
-export function serializeProfileMessage(profile: ProfilePayload): string {
-  return `${PROFILE_MESSAGE_PREFIX}${JSON.stringify(profile)}`;
-}
-
-export function parsePendingSeatIds(raw: string | null): string[] {
+export function parsePendingShowSeatIds(raw: string | null): string[] {
   if (!raw) return [];
 
   try {
@@ -280,7 +276,9 @@ export function buildTicketMarkdownInput(
 ): UiMarkdownToolCall {
   const showTime = formatShowTime(booking.showTime);
   const seatLines = booking.seats
-    .map((seat) => `- ${seat.row}${seat.number} (${seat.type}) — ₹${seat.price}`)
+    .map(
+      (seat) => `- ${seat.row}${seat.number} (${seat.type}) — ₹${seat.price}`,
+    )
     .join('\n');
   const theatreLine =
     booking.theatreName && booking.theatreCity

@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useShowSocket } from '@/hooks/useShowSocket';
+import { extractApiError } from '@/lib/api';
 import { fetchShowSeats, type ShowSeat } from '@/lib/booking-api';
 import { useCartStore } from '@/stores/cartStore';
 import { CheckoutSheet } from './CheckoutSheet';
@@ -148,7 +149,7 @@ export function SeatMap({ showId }: SeatMapProps) {
   if (error) {
     return (
       <p className="py-8 text-center text-red-600">
-        Failed to load seats. Please try again.
+        {extractApiError(error, 'Failed to load seats. Please try again.')}
       </p>
     );
   }

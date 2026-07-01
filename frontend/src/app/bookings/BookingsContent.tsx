@@ -3,6 +3,7 @@
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
+import { extractApiError } from '@/lib/api';
 import { fetchBookingsByUser } from '@/lib/booking-api';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -69,7 +70,11 @@ export function BookingsContent() {
         <p className="text-[var(--bms-text-muted)]">Loading bookings...</p>
       )}
 
-      {error && <p className="text-red-600">Failed to load bookings.</p>}
+      {error && (
+        <p className="text-red-600">
+          {extractApiError(error, 'Failed to load bookings.')}
+        </p>
+      )}
 
       {!isLoading && bookings.length === 0 && (
         <div className="bms-card p-8 text-center">

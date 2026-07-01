@@ -1,5 +1,7 @@
 import { Injectable } from '@nestjs/common';
+import { showRoomKey } from '../common/redis.keys';
 import { RealtimeGateway } from './realtime.gateway';
+import { REALTIME_EVENTS } from './realtime-events';
 
 @Injectable()
 export class RealtimeService {
@@ -7,19 +9,19 @@ export class RealtimeService {
 
   emitSeatHeld(showId: string, seatId: string, reservationId: string) {
     this.gateway.server
-      ?.to(`show:${showId}`)
-      .emit('seat-held', { showId, seatId, reservationId });
+      ?.to(showRoomKey(showId))
+      .emit(REALTIME_EVENTS.SEAT_HELD, { showId, seatId, reservationId });
   }
 
   emitSeatReleased(showId: string, seatId: string) {
     this.gateway.server
-      ?.to(`show:${showId}`)
-      .emit('seat-released', { showId, seatId });
+      ?.to(showRoomKey(showId))
+      .emit(REALTIME_EVENTS.SEAT_RELEASED, { showId, seatId });
   }
 
   emitSeatBooked(showId: string, seatId: string, bookingId: string) {
     this.gateway.server
-      ?.to(`show:${showId}`)
-      .emit('seat-booked', { showId, seatId, bookingId });
+      ?.to(showRoomKey(showId))
+      .emit(REALTIME_EVENTS.SEAT_BOOKED, { showId, seatId, bookingId });
   }
 }

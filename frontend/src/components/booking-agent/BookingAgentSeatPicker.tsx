@@ -2,13 +2,14 @@
 
 import { useMemo, useState } from 'react';
 import { cn } from '@/lib/utils';
+import type { SeatStatus } from '@/types/status';
 
 interface SeatPickerSeat {
   showSeatId: string;
   row: string;
   number: number;
   type: string;
-  status: 'AVAILABLE' | 'HELD' | 'BOOKED';
+  status: SeatStatus;
   price: number;
 }
 

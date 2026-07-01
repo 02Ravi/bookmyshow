@@ -1,5 +1,10 @@
 import { ConflictException } from '@nestjs/common';
 import { z } from 'zod';
+import {
+  DEMO_FAST_HOLD_SECONDS,
+  HOLD_TTL_MAX_SECONDS,
+  HOLD_TTL_MIN_SECONDS,
+} from '../../common/constants';
 import type { BookingToolsContext } from './context';
 import { assertUuid } from './utils';
 
@@ -7,7 +12,12 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
   const inputSchema = z.object({
     showId: z.string().uuid(),
     showSeatIds: z.array(z.string()).min(1),
-    holdDurationSeconds: z.number().int().min(5).max(600).optional(),
+    holdDurationSeconds: z
+      .number()
+      .int()
+      .min(HOLD_TTL_MIN_SECONDS)
+      .max(HOLD_TTL_MAX_SECONDS)
+      .optional(),
   });
 
   return {
@@ -20,7 +30,9 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
       holdDurationSeconds,
     }: z.infer<typeof inputSchema>) => {
       if (!ctx.session.userId) {
-        throw new Error('User details are not set in this session. Call upsertUser first.');
+        throw new Error(
+          'User details are not set in this session. Call upsertUser first.',
+        );
       }
 
       try {
@@ -35,7 +47,7 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
 
       const effectiveHoldDuration =
         process.env.DEMO_FAST_HOLD === 'true'
-          ? 10
+          ? DEMO_FAST_HOLD_SECONDS
           : holdDurationSeconds;
 
       try {
