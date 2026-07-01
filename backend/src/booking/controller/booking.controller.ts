@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   HttpStatus,
@@ -40,5 +41,14 @@ export class BookingController {
   @HttpCode(HttpStatus.OK)
   detail(@Param('id', ParseUUIDPipe) id: string) {
     return this.bookingService.findById(id);
+  }
+
+  @Delete(':id')
+  @HttpCode(HttpStatus.OK)
+  cancel(
+    @Param('id', ParseUUIDPipe) id: string,
+    @Query('userId', ParseUUIDPipe) userId: string,
+  ) {
+    return this.bookingService.cancelBooking(id, userId);
   }
 }

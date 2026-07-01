@@ -4,6 +4,7 @@ import { ScheduleModule } from '@nestjs/schedule';
 import { PrismaModule } from './prisma/prisma.module';
 import { RedisModule } from './redis/redis.module';
 import { RealtimeModule } from './realtime/realtime.module';
+import { AgentModule } from './agent/module/agent.module';
 import { CatalogModule } from './catalog/module/catalog.module';
 import { ReservationModule } from './reservation/module/reservation.module';
 import { BookingModule } from './booking/module/booking.module';
@@ -21,6 +22,7 @@ import appConfig from './config/app.config';
     PrismaModule,
     RedisModule,
     RealtimeModule,
+    AgentModule,
     CatalogModule,
     ReservationModule,
     BookingModule,

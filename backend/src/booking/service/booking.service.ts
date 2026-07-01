@@ -1,5 +1,6 @@
 import {
   ConflictException,
+  ForbiddenException,
   GoneException,
   Injectable,
   Logger,
@@ -188,5 +189,78 @@ export class BookingService {
     }
 
     return toBookingDetailDto(booking);
+  }
+
+  async cancelBooking(
+    bookingId: string,
+    userId: string,
+  ): Promise<BookingDetailDto> {
+    const booking = await this.prisma.booking.findUnique({
+      where: { id: bookingId },
+      include: bookingDetailInclude,
+    });
+
+    if (!booking) {
+      throw new NotFoundException(`Booking ${bookingId} not found`);
+    }
+
+    if (booking.userId !== userId) {
+      throw new ForbiddenException('You can only cancel your own bookings');
+    }
+
+    if (booking.status === BookingStatus.CANCELLED) {
+      return toBookingDetailDto(booking);
+    }
+
+    if (booking.status !== BookingStatus.CONFIRMED) {
+      throw new ConflictException(`Booking is ${booking.status}`);
+    }
+
+    const releases = booking.bookingSeats
+      .filter((bs) => bs.showSeat.status === ShowSeatStatus.BOOKED)
+      .map((bs) => ({
+        showSeatId: bs.showSeat.id,
+        showId: bs.showSeat.show.id,
+        seatId: bs.showSeat.seatId,
+        version: bs.showSeat.version,
+      }));
+
+    await this.prisma.$transaction(async (tx) => {
+      await tx.booking.update({
+        where: { id: bookingId },
+        data: { status: BookingStatus.CANCELLED },
+      });
+
+      for (const release of releases) {
+        const updated = await tx.showSeat.updateMany({
+          where: {
+            id: release.showSeatId,
+            status: ShowSeatStatus.BOOKED,
+            version: release.version,
+          },
+          data: {
+            status: ShowSeatStatus.AVAILABLE,
+            version: { increment: 1 },
+          },
+        });
+
+        if (updated.count !== 1) {
+          throw new ConflictException(
+            `Seat ${release.showSeatId} could not be released`,
+          );
+        }
+      }
+    });
+
+    for (const release of releases) {
+      this.realtime.emitSeatReleased(release.showId, release.seatId);
+    }
+
+    const cancelled = await this.prisma.booking.findUniqueOrThrow({
+      where: { id: bookingId },
+      include: bookingDetailInclude,
+    });
+
+    return toBookingDetailDto(cancelled);
   }
 }

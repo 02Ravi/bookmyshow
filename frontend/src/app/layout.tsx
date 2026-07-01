@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { BookingAgentToggle } from "@/components/booking-agent";
 import { NavBar } from "@/components/NavBar";
 import { QueryProvider } from "@/providers/QueryProvider";
 import "./globals.css";
@@ -33,6 +34,7 @@ export default function RootLayout({
         <QueryProvider>
           <NavBar />
           <div className="flex-1">{children}</div>
+          <BookingAgentToggle />
         </QueryProvider>
       </body>
     </html>

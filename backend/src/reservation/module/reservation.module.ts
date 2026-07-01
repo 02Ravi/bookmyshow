@@ -11,6 +11,6 @@ import { ReservationService } from '../service/reservation.service';
     ReservationReconcileService,
     ReservationReconcileCron,
   ],
-  exports: [ReservationReconcileService],
+  exports: [ReservationService, ReservationReconcileService],
 })
 export class ReservationModule {}

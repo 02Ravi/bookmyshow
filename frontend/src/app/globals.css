@@ -13,6 +13,11 @@
   --bms-seat-available: #3fc122;
   --bms-seat-selected: #3fc122;
   --bms-seat-sold: #b0b0b0;
+  --bms-chat-surface: #ffffff;
+  --bms-chat-muted: #f8f9fb;
+  --bms-chat-border: var(--bms-border);
+  --bms-chat-user: var(--bms-header);
+  --bms-chat-assistant: var(--bms-chat-muted);
   --background: var(--bms-page);
   --foreground: var(--bms-text);
 }
@@ -72,5 +77,13 @@ body {
 
   .bms-ticket-notch {
     @apply absolute top-1/2 h-6 w-6 -translate-y-1/2 rounded-full bg-[var(--bms-page)];
+  }
+
+  .bms-agent-card {
+    @apply rounded-md border border-[var(--bms-chat-border)] bg-[var(--bms-chat-surface)] p-3 shadow-sm;
+  }
+
+  .bms-agent-card-label {
+    @apply text-[11px] font-semibold uppercase tracking-wider text-[var(--bms-text-muted)];
   }
 }

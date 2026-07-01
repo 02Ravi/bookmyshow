@@ -83,6 +83,27 @@ export class CatalogService {
     return shows.map(toShowListItem);
   }
 
+  async findShowDatesByMovie(movieId: string): Promise<string[]> {
+    const startOfTodayUtc = new Date();
+    startOfTodayUtc.setUTCHours(0, 0, 0, 0);
+
+    const shows = await this.prisma.show.findMany({
+      where: {
+        movieId,
+        startTime: { gte: startOfTodayUtc },
+      },
+      select: { startTime: true },
+      orderBy: { startTime: 'asc' },
+    });
+
+    const dates = new Set<string>();
+    for (const show of shows) {
+      dates.add(show.startTime.toISOString().slice(0, 10));
+    }
+
+    return [...dates].sort();
+  }
+
   async findShowById(id: string): Promise<ShowDetailDto> {
     const show = await this.prisma.show.findUnique({
       where: { id },
