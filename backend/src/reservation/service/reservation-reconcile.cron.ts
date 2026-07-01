@@ -24,7 +24,9 @@ export class ReservationReconcileCron implements OnModuleInit {
     const configured = this.configService.get<string>('RECONCILE_CRON_INTERVAL');
     const expression = configured?.trim() || CronExpression.EVERY_MINUTE;
     const job = new CronJob(expression, () => {
-      void this.reconcileExpiredHolds();
+      void this.reconcileExpiredHolds().catch((err: unknown) => {
+        this.logger.error('Reservation reconcile tick failed', err);
+      });
     });
     this.schedulerRegistry.addCronJob(CRON_JOB_NAME, job);
     job.start();
@@ -32,14 +34,24 @@ export class ReservationReconcileCron implements OnModuleInit {
   }
 
   async reconcileExpiredHolds(): Promise<void> {
-    const candidates = await this.prisma.reservation.findMany({
-      where: {
-        status: ReservationStatus.ACTIVE,
-        expiresAt: { lt: new Date() },
-      },
-      select: { id: true },
-      take: BATCH_SIZE,
-    });
+    let candidates: { id: string }[];
+
+    try {
+      candidates = await this.prisma.reservation.findMany({
+        where: {
+          status: ReservationStatus.ACTIVE,
+          expiresAt: { lt: new Date() },
+        },
+        select: { id: true },
+        take: BATCH_SIZE,
+      });
+    } catch (err) {
+      this.logger.error(
+        'Could not query expired reservations (database unreachable?)',
+        err,
+      );
+      return;
+    }
 
     let succeeded = 0;
     let failed = 0;
