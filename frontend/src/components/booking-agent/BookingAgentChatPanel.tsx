@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { ChatMessage, UiBlock, isInteractiveBlock, isTextBlock } from '@/types/agent';
 import { BookingAgentChoiceGroup } from './BookingAgentChoiceGroup';
 import { BookingAgentConfirmBlock } from './BookingAgentConfirmBlock';
+import { BookingAgentProfileForm } from './BookingAgentProfileForm';
 import { BookingAgentSeatPicker } from './BookingAgentSeatPicker';
 
 interface BookingAgentChatPanelProps {
@@ -96,6 +97,18 @@ function MessageBlock({
         message={block.message}
         onConfirm={(value) => void onSend(value, answerMessageId, 'Selected seats')}
         seats={block.seats}
+      />
+    );
+  }
+
+  if (block.type === 'profile_form') {
+    return (
+      <BookingAgentProfileForm
+        disabled={disabled}
+        message={block.message}
+        onConfirm={(value, displayContent) =>
+          void onSend(value, answerMessageId, displayContent)
+        }
       />
     );
   }

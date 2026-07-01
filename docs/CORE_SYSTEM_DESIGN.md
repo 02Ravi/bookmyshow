@@ -276,7 +276,7 @@ If the model returns an empty turn on “what movies are playing?”, a **safety
 
 ### 7.3 Session state (Redis)
 
-`AgentSession` tracks: `userId`, `movieId`, `selectedDate`, `showId`, `reservationId`, `pendingCancelBookingId`, and message history.
+`AgentSession` tracks: `userId`, `movieId`, `selectedDate`, `showId`, `reservationId`, `pendingCancelBookingId`, `awaitingCancelBookingPick`, and message history.
 
 - Stored as Redis hash `agent:session:{sessionId}`, TTL **30 minutes**.  
 - Turn lock: `agent:lock:{sessionId}` with **30-second** NX lock prevents concurrent messages corrupting session state.

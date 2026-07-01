@@ -18,6 +18,10 @@ export interface AgentSession {
   reservationId: string | null;
   showId: string | null;
   pendingCancelBookingId: string | null;
+  /** True after cancel picker is shown; cleared when user picks a booking or changes intent. */
+  awaitingCancelBookingPick: boolean;
+  /** JSON array of showSeatId UUIDs awaiting profile before hold. */
+  pendingSeatIds: string | null;
   messages: AgentStoredMessage[];
 }
 
@@ -31,6 +35,8 @@ const EMPTY_SESSION: AgentSession = {
   reservationId: null,
   showId: null,
   pendingCancelBookingId: null,
+  awaitingCancelBookingPick: false,
+  pendingSeatIds: null,
   messages: [],
 };
 
@@ -58,6 +64,8 @@ export class SessionService {
       reservationId: values.reservationId || null,
       showId: values.showId || null,
       pendingCancelBookingId: values.pendingCancelBookingId || null,
+      awaitingCancelBookingPick: values.awaitingCancelBookingPick === '1',
+      pendingSeatIds: values.pendingSeatIds || null,
       messages: this.parseMessages(values.messages),
     };
   }
@@ -74,6 +82,8 @@ export class SessionService {
       reservationId: session.reservationId ?? '',
       showId: session.showId ?? '',
       pendingCancelBookingId: session.pendingCancelBookingId ?? '',
+      awaitingCancelBookingPick: session.awaitingCancelBookingPick ? '1' : '',
+      pendingSeatIds: session.pendingSeatIds ?? '',
       messages: JSON.stringify(session.messages),
     });
     await this.redis.getClient().expire(key, SESSION_TTL_SECONDS);

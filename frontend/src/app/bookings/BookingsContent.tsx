@@ -46,10 +46,10 @@ export function BookingsContent() {
         </h1>
         <div className="bms-card p-8 text-center">
           <p className="text-[var(--bms-text-muted)]">
-            No bookings found on this device.
+            No profile saved on this device yet.
           </p>
           <p className="mt-2 text-sm text-[var(--bms-text-muted)]">
-            Book a movie and your tickets will appear here automatically.
+            Book via the assistant or seat map — your details are saved after checkout.
           </p>
           <Link href="/" className="bms-cta mt-6 inline-block">
             Browse movies

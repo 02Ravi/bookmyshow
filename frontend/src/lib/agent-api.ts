@@ -10,6 +10,12 @@ export interface AgentChatApiResponse {
   toolCalls: AgentToolCall[];
   sessionId: string;
   redirectTo?: string;
+  sessionIdentity?: {
+    userId: string;
+    name: string;
+    email: string;
+    phone: string | null;
+  };
 }
 
 export interface AgentIdentityPayload {

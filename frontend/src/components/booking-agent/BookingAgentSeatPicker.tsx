@@ -145,8 +145,9 @@ export function BookingAgentSeatPicker({
             onClick={() => void confirmSelection()}
             className={cn('bms-cta', !canConfirm && 'opacity-50')}
           >
-            Confirm {selectedIds.length || maxSelections || 0} seat
-            {(selectedIds.length || maxSelections || 0) !== 1 ? 's' : ''}
+            {selectedIds.length > 0
+              ? `Confirm ${selectedIds.length} seat${selectedIds.length !== 1 ? 's' : ''}`
+              : 'Confirm selection'}
           </button>
         </div>
       )}

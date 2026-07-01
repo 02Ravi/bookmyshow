@@ -21,6 +21,7 @@ export function createCancelBookingTool(ctx: BookingToolsContext) {
       );
 
       ctx.session.pendingCancelBookingId = null;
+      ctx.session.awaitingCancelBookingPick = false;
 
       return {
         bookingId: booking.id,

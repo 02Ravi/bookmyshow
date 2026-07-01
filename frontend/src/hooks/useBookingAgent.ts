@@ -44,6 +44,11 @@ interface SeatPickerInput {
   maxSelections?: number;
 }
 
+interface ProfileFormInput {
+  type: 'profile_form';
+  message: string;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null;
 }
@@ -71,6 +76,11 @@ function isConfirmInput(value: unknown): value is ConfirmInput {
 function isSeatPickerInput(value: unknown): value is SeatPickerInput {
   if (!isRecord(value)) return false;
   return value.type === 'seat_picker' && typeof value.message === 'string';
+}
+
+function isProfileFormInput(value: unknown): value is ProfileFormInput {
+  if (!isRecord(value)) return false;
+  return value.type === 'profile_form' && typeof value.message === 'string';
 }
 
 function parseToolBlocks(toolCalls: AgentToolCall[]): UiBlock[] {
@@ -110,6 +120,13 @@ function parseToolBlocks(toolCalls: AgentToolCall[]): UiBlock[] {
         maxSelections: toolCall.input.maxSelections ?? 0,
       });
     }
+
+    if (toolCall.toolName === 'uiPrompt' && isProfileFormInput(toolCall.input)) {
+      blocks.push({
+        type: 'profile_form',
+        message: toolCall.input.message,
+      });
+    }
   }
 
   return blocks;
@@ -140,6 +157,48 @@ function buildAssistantBlocks(text: string, toolCalls: AgentToolCall[]): UiBlock
   }
 
   return keepLastInteractiveBlock(blocks);
+}
+
+function buildIdentityPayload(
+  userId: string | null,
+  name: string | null,
+  email: string | null,
+  phone: string | null,
+): AgentIdentityPayload | undefined {
+  if (email?.trim() && name?.trim()) {
+    return {
+      userId: userId ?? undefined,
+      name: name.trim(),
+      email: email.trim(),
+      phone: phone?.trim() || undefined,
+    };
+  }
+
+  if (userId) {
+    return {
+      userId,
+      name: name ?? undefined,
+      email: email ?? undefined,
+      phone: phone ?? undefined,
+    };
+  }
+
+  return undefined;
+}
+
+function syncSessionIdentity(
+  identity: AgentIdentityPayload | undefined,
+): void {
+  if (!identity?.userId || !identity.name || !identity.email) {
+    return;
+  }
+
+  useAuthStore.setState({
+    userId: identity.userId,
+    name: identity.name,
+    email: identity.email,
+    phone: identity.phone ?? null,
+  });
 }
 
 export function useBookingAgent() {
@@ -184,16 +243,15 @@ export function useBookingAgent() {
       setLoading(true);
 
       try {
-        const identity: AgentIdentityPayload | undefined =
-          messages.length === 0 && !sessionId && userId
-            ? { userId, name, email, phone }
-            : undefined;
+        const identity = buildIdentityPayload(userId, name, email, phone);
 
         const data = await sendAgentMessage(
           content,
           sessionId ?? undefined,
           identity,
         );
+
+        syncSessionIdentity(data.sessionIdentity);
 
         const blocks = buildAssistantBlocks(data.text, data.toolCalls);
 
@@ -228,7 +286,7 @@ export function useBookingAgent() {
         setLoading(false);
       }
     },
-    [email, loading, messages.length, name, phone, router, sessionId, userId],
+    [email, loading, name, phone, router, sessionId, userId],
   );
 
   return {

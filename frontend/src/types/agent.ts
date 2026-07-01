@@ -33,6 +33,10 @@ export type UiBlock =
         price: number;
       }>;
       maxSelections: number;
+    }
+  | {
+      type: 'profile_form';
+      message: string;
     };
 
 export interface ChatMessage {
@@ -46,7 +50,8 @@ export function isInteractiveBlock(block: UiBlock): boolean {
   return (
     block.type === 'choice_group' ||
     block.type === 'seat_picker' ||
-    block.type === 'confirm'
+    block.type === 'confirm' ||
+    block.type === 'profile_form'
   );
 }
 

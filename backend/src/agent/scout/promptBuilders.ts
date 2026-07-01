@@ -32,6 +32,8 @@ export interface BookingTicketSource {
   bookingId: string;
   movieTitle: string;
   showTime: string | Date;
+  theatreName?: string;
+  theatreCity?: string;
   seats: Array<{
     row: string;
     number: number;
@@ -171,6 +173,85 @@ export function isSeatIdsMessage(message: string): boolean {
   }
 }
 
+export const PROFILE_MESSAGE_PREFIX = 'PROFILE:';
+
+export interface ProfilePayload {
+  name: string;
+  email: string;
+  phone: string;
+}
+
+export function isProfileMessage(message: string): boolean {
+  return message.trim().startsWith(PROFILE_MESSAGE_PREFIX);
+}
+
+export function parseProfileMessage(message: string): ProfilePayload | null {
+  if (!isProfileMessage(message)) return null;
+
+  try {
+    const raw = message.trim().slice(PROFILE_MESSAGE_PREFIX.length);
+    const parsed = JSON.parse(raw) as unknown;
+    if (!parsed || typeof parsed !== 'object') return null;
+
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.name !== 'string' ||
+      typeof record.email !== 'string' ||
+      typeof record.phone !== 'string'
+    ) {
+      return null;
+    }
+
+    const name = record.name.trim();
+    const email = record.email.trim();
+    const phone = record.phone.trim();
+
+    if (!name || !email || !phone) return null;
+
+    return { name, email, phone };
+  } catch {
+    return null;
+  }
+}
+
+export function serializeProfileMessage(profile: ProfilePayload): string {
+  return `${PROFILE_MESSAGE_PREFIX}${JSON.stringify(profile)}`;
+}
+
+export function parsePendingSeatIds(raw: string | null): string[] {
+  if (!raw) return [];
+
+  try {
+    const parsed = JSON.parse(raw) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter(
+      (id): id is string => typeof id === 'string' && UUID_PATTERN.test(id),
+    );
+  } catch {
+    return [];
+  }
+}
+
+export function buildProfileFormInput(
+  message = 'Enter your details to hold seats:',
+): UiPromptToolCall {
+  return {
+    toolName: 'uiPrompt',
+    input: {
+      type: 'profile_form',
+      message,
+    },
+  };
+}
+
+export function hasSessionIdentity(session: {
+  userId: string | null;
+  email: string | null;
+  name: string | null;
+}): boolean {
+  return Boolean(session.userId && session.email && session.name);
+}
+
 export function buildHoldConfirmInput(params: {
   seatsHeld: number;
   expiresAt?: string | Date;
@@ -201,22 +282,94 @@ export function buildTicketMarkdownInput(
   const seatLines = booking.seats
     .map((seat) => `- ${seat.row}${seat.number} (${seat.type}) — ₹${seat.price}`)
     .join('\n');
+  const theatreLine =
+    booking.theatreName && booking.theatreCity
+      ? `\nVenue: ${booking.theatreName}, ${booking.theatreCity}`
+      : '';
 
   return {
     toolName: 'uiMarkdown',
     input: {
-      markdown: `## Booking Confirmed
+      markdown: `## Your Ticket
 
 **${booking.movieTitle}**
 
-Showtime: ${showTime}
+Showtime: ${showTime}${theatreLine}
 
 **Seats**
 ${seatLines}
 
-**Total: ₹${booking.totalPrice}**`,
+**Total: ₹${booking.totalPrice}**
+
+Booking ID: \`${booking.bookingId}\``,
     },
   };
+}
+
+export interface BookingDetailForTicket {
+  id: string;
+  status: string;
+  show: {
+    startTime: Date | string;
+    movie: { title: string };
+    theatre: { name: string; city: string };
+  };
+  seats: Array<{
+    row: string;
+    number: number;
+    type: string;
+    price: string;
+  }>;
+}
+
+export function bookingDetailToTicketSource(
+  detail: BookingDetailForTicket,
+): BookingTicketSource {
+  const totalPrice = detail.seats
+    .reduce((sum, seat) => sum + Number(seat.price), 0)
+    .toFixed(2);
+
+  return {
+    bookingId: detail.id,
+    movieTitle: detail.show.movie.title,
+    showTime: detail.show.startTime,
+    theatreName: detail.show.theatre.name,
+    theatreCity: detail.show.theatre.city,
+    seats: detail.seats.map((seat) => ({
+      row: seat.row,
+      number: seat.number,
+      type: seat.type,
+      price: seat.price,
+    })),
+    totalPrice,
+  };
+}
+
+export function isViewBookingsMessage(message: string): boolean {
+  if (isCancelBookingMessage(message)) return false;
+
+  const normalized = message.trim().toLowerCase();
+  if (
+    /\b(my|show|view|see|list|upcoming|confirmed|detailed?)\b.*\b(bookings?|tickets?)\b/.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (
+    /\b(bookings?|tickets?)\b.*\b(details?|detail|show|view|list)\b/.test(
+      normalized,
+    )
+  ) {
+    return true;
+  }
+  if (/\bwhat\b.*\b(booked|booking)\b/.test(normalized)) return true;
+  if (/\b(how many|any)\b.*\b(tickets?|bookings?)\b/.test(normalized)) {
+    return true;
+  }
+  if (normalized.includes('ticket booked')) return true;
+
+  return false;
 }
 
 export interface BookingCancelChoiceSource {

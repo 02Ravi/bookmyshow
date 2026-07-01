@@ -37,6 +37,10 @@ export function createUiPromptTool() {
       seats: z.array(seat),
       maxSelections: z.number().optional(),
     }),
+    z.object({
+      type: z.literal('profile_form'),
+      message: z.string(),
+    }),
   ]);
 
   return {

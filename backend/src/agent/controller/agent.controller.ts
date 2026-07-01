@@ -10,6 +10,7 @@ import { randomUUID } from 'node:crypto';
 import { AuthService } from '../../auth/service/auth.service';
 import { BookingService } from '../../booking/service/booking.service';
 import { CatalogService } from '../../catalog/service/catalog.service';
+import { PrismaService } from '../../prisma/prisma.service';
 import { ReservationService } from '../../reservation/service/reservation.service';
 import { buildSystemPrompt } from '../scout/buildSystemPrompt';
 import { enrichToolCalls } from '../scout/enrichToolCalls';
@@ -17,8 +18,14 @@ import { runAgentLoop } from '../scout/agentLoop';
 import {
   DATE_MESSAGE_PATTERN,
   UUID_PATTERN,
+  parseProfileMessage,
 } from '../scout/promptBuilders';
 import { AgentChatDto } from '../dto/agent-chat.dto';
+import {
+  reconcileClientIdentity,
+  toSessionIdentity,
+  upsertProfileIntoSession,
+} from '../session/resolveSessionIdentity';
 import {
   AgentSession,
   AgentStoredMessage,
@@ -30,6 +37,12 @@ interface AgentChatResponse {
   toolCalls: unknown[];
   sessionId: string;
   redirectTo?: string;
+  sessionIdentity?: {
+    userId: string;
+    name: string;
+    email: string;
+    phone: string | null;
+  };
 }
 
 @Controller('agent')
@@ -38,6 +51,7 @@ export class AgentController {
     private readonly auth: AuthService,
     private readonly booking: BookingService,
     private readonly catalog: CatalogService,
+    private readonly prisma: PrismaService,
     private readonly reservation: ReservationService,
     private readonly sessionService: SessionService,
   ) {}
@@ -67,6 +81,7 @@ export class AgentController {
         catalog: this.catalog,
         reservation: this.reservation,
         booking: this.booking,
+        auth: this.auth,
         sessionId,
       });
       const { text, redirectTo } = extractRedirect(enriched.text);
@@ -79,6 +94,7 @@ export class AgentController {
         toolCalls: filterClientToolCalls(enriched.toolCalls),
         sessionId,
         redirectTo,
+        sessionIdentity: toSessionIdentity(session),
       };
     } finally {
       await this.sessionService.releaseTurnLock(requestSessionId);
@@ -105,11 +121,11 @@ export class AgentController {
       (await this.sessionService.getSession(sessionId)) ??
       this.sessionService.createEmptySession();
 
-    if (dto.identity?.userId && !session.userId) {
-      session.userId = dto.identity.userId;
-      session.name = dto.identity.name ?? null;
-      session.email = dto.identity.email ?? null;
-      session.phone = dto.identity.phone ?? null;
+    await reconcileClientIdentity(session, dto.identity, this.auth, this.prisma);
+
+    const profile = parseProfileMessage(dto.message);
+    if (profile) {
+      await upsertProfileIntoSession(session, profile, this.auth);
     }
 
     this.applyUserMessageToSession(session, dto.message);
@@ -154,7 +170,13 @@ function toCoreMessages(messages: AgentStoredMessage[]): ModelMessage[] {
   }));
 }
 
-const CLIENT_HIDDEN_TOOLS = new Set(['listMovies', 'listShows', 'getSeatMap']);
+const CLIENT_HIDDEN_TOOLS = new Set([
+  'listMovies',
+  'listShows',
+  'getSeatMap',
+  'listBookings',
+  'getBooking',
+]);
 
 function filterValidToolCalls(toolCalls: unknown[]): unknown[] {
   return toolCalls.filter((toolCall) => {
