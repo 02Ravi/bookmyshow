@@ -11,8 +11,13 @@ const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString }),
 });
 
-const ROWS = ['A', 'B', 'C', 'D', 'E'];
-const SEATS_PER_ROW = 6;
+/** How many days of showtimes to generate (starting today, UTC). */
+const DAYS_AHEAD = 14;
+/** Show start hours per day (UTC). */
+const SHOW_HOURS = [10, 14, 18, 21];
+
+const ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+const SEATS_PER_ROW = 10;
 
 const MOVIES = [
   {
@@ -49,6 +54,11 @@ const THEATRES = [
     city: 'Bangalore',
     address: 'Koramangala, Bangalore',
   },
+  {
+    name: 'Cinepolis Orion',
+    city: 'Mumbai',
+    address: 'Goregaon, Mumbai',
+  },
 ];
 
 function addDays(date: Date, days: number): Date {
@@ -64,7 +74,15 @@ function setShowTime(base: Date, hour: number, minute: number): Date {
 }
 
 function seatPrice(type: SeatType): string {
-  return type === SeatType.PREMIUM ? '350.00' : '200.00';
+  if (type === SeatType.PREMIUM) return '350.00';
+  if (type === SeatType.RECLINER) return '450.00';
+  return '200.00';
+}
+
+function seatTypeForRow(row: string): SeatType {
+  if (row === 'H') return SeatType.RECLINER;
+  if (row === 'G' || row === 'F') return SeatType.PREMIUM;
+  return SeatType.REGULAR;
 }
 
 async function main() {
@@ -105,8 +123,8 @@ async function main() {
     const seats: { id: string; type: SeatType }[] = [];
 
     for (const row of ROWS) {
+      const type = seatTypeForRow(row);
       for (let number = 1; number <= SEATS_PER_ROW; number++) {
-        const type = row === 'E' ? SeatType.PREMIUM : SeatType.REGULAR;
         const seat = await prisma.seat.create({
           data: {
             screenId: screen.id,
@@ -125,40 +143,43 @@ async function main() {
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
-  const showSlots = [
-    { dayOffset: 0, hour: 18, minute: 0 },
-    { dayOffset: 1, hour: 21, minute: 0 },
-  ];
+  let showCount = 0;
+  let showSeatCount = 0;
 
-  for (let i = 0; i < screens.length; i++) {
-    const screen = screens[i];
-    const movie = movies[i % movies.length];
-    const seats = seatsByScreen.get(screen.id)!;
+  for (const movie of movies) {
+    for (const screen of screens) {
+      const seats = seatsByScreen.get(screen.id)!;
 
-    for (const slot of showSlots) {
-      const day = addDays(today, slot.dayOffset);
-      const startTime = setShowTime(day, slot.hour, slot.minute);
-      const endTime = new Date(
-        startTime.getTime() + movie.durationMinutes * 60 * 1000,
-      );
+      for (let dayOffset = 0; dayOffset < DAYS_AHEAD; dayOffset++) {
+        for (const hour of SHOW_HOURS) {
+          const day = addDays(today, dayOffset);
+          const startTime = setShowTime(day, hour, 0);
+          const endTime = new Date(
+            startTime.getTime() + movie.durationMinutes * 60 * 1000,
+          );
 
-      const show = await prisma.show.create({
-        data: {
-          movieId: movie.id,
-          screenId: screen.id,
-          startTime,
-          endTime,
-        },
-      });
+          const show = await prisma.show.create({
+            data: {
+              movieId: movie.id,
+              screenId: screen.id,
+              startTime,
+              endTime,
+            },
+          });
 
-      await prisma.showSeat.createMany({
-        data: seats.map((seat) => ({
-          showId: show.id,
-          seatId: seat.id,
-          status: ShowSeatStatus.AVAILABLE,
-          price: seatPrice(seat.type),
-        })),
-      });
+          await prisma.showSeat.createMany({
+            data: seats.map((seat) => ({
+              showId: show.id,
+              seatId: seat.id,
+              status: ShowSeatStatus.AVAILABLE,
+              price: seatPrice(seat.type),
+            })),
+          });
+
+          showCount += 1;
+          showSeatCount += seats.length;
+        }
+      }
     }
   }
 
@@ -169,12 +190,18 @@ async function main() {
     },
   });
 
+  const seatsPerScreen = ROWS.length * SEATS_PER_ROW;
+
   console.log('Seed complete:', {
     movies: movies.length,
     theatres: theatres.length,
     screens: screens.length,
-    shows: screens.length * showSlots.length,
-    showSeats: screens.length * showSlots.length * ROWS.length * SEATS_PER_ROW,
+    daysAhead: DAYS_AHEAD,
+    slotsPerDay: SHOW_HOURS.length,
+    seatsPerScreen,
+    shows: showCount,
+    showSeats: showSeatCount,
+    allSeatsStatus: 'AVAILABLE',
     demoUserId: demoUser.id,
   });
 }

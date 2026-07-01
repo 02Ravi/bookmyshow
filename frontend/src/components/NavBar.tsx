@@ -6,7 +6,15 @@ import { useAuthStore } from '@/stores/authStore';
 export function NavBar() {
   const userId = useAuthStore((s) => s.userId);
   const name = useAuthStore((s) => s.name);
-  const clearUser = useAuthStore((s) => s.clearUser);
+
+  function handleSignOut() {
+    useAuthStore.setState({
+      userId: null,
+      name: null,
+      email: null,
+      phone: null,
+    });
+  }
 
   return (
     <header className="bg-[var(--bms-header)] shadow-md">
@@ -41,7 +49,7 @@ export function NavBar() {
               <span className="text-gray-300">Hi, {name}</span>
               <button
                 type="button"
-                onClick={clearUser}
+                onClick={handleSignOut}
                 className="text-xs text-gray-400 hover:text-[var(--bms-red)]"
               >
                 Sign out

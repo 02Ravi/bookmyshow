@@ -16,6 +16,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { RedisService } from '../../redis/redis.service';
 import { RealtimeService } from '../../realtime/realtime.service';
 import { ReservationReconcileService } from '../../reservation/service/reservation-reconcile.service';
+import { isReservationExpired } from '../../reservation/service/reservation-expiry.util';
 import { CreateBookingDto } from '../dto/create-booking.dto';
 import {
   BookingDetailDto,
@@ -74,7 +75,7 @@ export class BookingService {
       throw new ConflictException(`Reservation is ${reservation.status}`);
     }
 
-    if (reservation.expiresAt <= new Date()) {
+    if (isReservationExpired(reservation)) {
       await this.reservationReconcile.expireReservation(reservation.id);
       throw new GoneException('Reservation has expired');
     }
@@ -121,10 +122,18 @@ export class BookingService {
           }
         }
 
-        await tx.reservation.update({
-          where: { id: reservation.id },
+        const updatedReservation = await tx.reservation.updateMany({
+          where: {
+            id: reservation.id,
+            status: ReservationStatus.ACTIVE,
+          },
           data: { status: ReservationStatus.CONFIRMED },
         });
+        if (updatedReservation.count !== 1) {
+          throw new ConflictException(
+            `Reservation ${reservation.id} is no longer ACTIVE`,
+          );
+        }
 
         return booking.id;
       });

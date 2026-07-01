@@ -1,5 +1,4 @@
 import {
-  OnGatewayInit,
   SubscribeMessage,
   WebSocketGateway,
   WebSocketServer,
@@ -7,13 +6,9 @@ import {
 import { Server, Socket } from 'socket.io';
 
 @WebSocketGateway({ cors: { origin: '*' } })
-export class RealtimeGateway implements OnGatewayInit {
+export class RealtimeGateway {
   @WebSocketServer()
   server!: Server;
-
-  afterInit() {
-    // Gateway ready
-  }
 
   @SubscribeMessage('join-show')
   handleJoinShow(client: Socket, showId: string) {

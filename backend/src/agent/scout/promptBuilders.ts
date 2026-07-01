@@ -1,3 +1,5 @@
+import { ShowSeatStatus } from '../../generated/prisma/client';
+
 export interface UiPromptToolCall {
   toolName: 'uiPrompt';
   input: Record<string, unknown>;
@@ -22,7 +24,7 @@ export interface SeatChoiceSource {
   row: string;
   number: number;
   type: string;
-  status: 'AVAILABLE' | 'HELD' | 'BOOKED';
+  status: ShowSeatStatus;
   price: number | string;
 }
 

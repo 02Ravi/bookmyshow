@@ -1,9 +1,7 @@
 import { ConflictException } from '@nestjs/common';
 import { z } from 'zod';
 import type { BookingToolsContext } from './context';
-
-const UUID_REGEX =
-  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+import { assertUuid } from './utils';
 
 export function createHoldSeatsTool(ctx: BookingToolsContext) {
   const inputSchema = z.object({
@@ -25,8 +23,9 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
         throw new Error('User details are not set in this session. Call upsertUser first.');
       }
 
-      const allSeatUuids = showSeatIds.every((id) => UUID_REGEX.test(id));
-      if (!allSeatUuids) {
+      try {
+        showSeatIds.forEach((id) => assertUuid(id, 'showSeatIds'));
+      } catch {
         return {
           error: true,
           message:

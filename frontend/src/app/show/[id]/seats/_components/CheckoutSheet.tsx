@@ -1,7 +1,6 @@
 'use client';
 
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { isAxiosError } from 'axios';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
@@ -10,6 +9,7 @@ import {
   createReservation,
   type ShowSeat,
 } from '@/lib/booking-api';
+import { extractApiError, extractApiStatus } from '@/lib/api';
 import { upsertUser } from '@/lib/movies-api';
 import { useAuthStore } from '@/stores/authStore';
 
@@ -34,24 +34,10 @@ function formatCountdown(seconds: number): string {
   return `${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}`;
 }
 
-function getErrorMessage(error: unknown): string {
-  if (isAxiosError(error)) {
-    const data = error.response?.data as { message?: string | string[] } | undefined;
-    if (Array.isArray(data?.message)) {
-      return data.message.join(', ');
-    }
-    if (typeof data?.message === 'string') {
-      return data.message;
-    }
-    if (error.response?.status === 409) {
-      return 'One or more seats you selected have already been booked. Please go back and choose different seats.';
-    }
-    if (error.response?.status === 410) {
-      return 'Your reservation has expired. Please select seats again.';
-    }
-  }
-  return 'Something went wrong. Please try again.';
-}
+const STATUS_MESSAGES: Partial<Record<number, string>> = {
+  409: 'One or more seats you selected have already been booked. Please go back and choose different seats.',
+  410: 'Your reservation has expired. Please select seats again.',
+};
 
 export function CheckoutSheet({
   showId,
@@ -64,8 +50,6 @@ export function CheckoutSheet({
 }: CheckoutSheetProps) {
   const router = useRouter();
   const queryClient = useQueryClient();
-  const setUser = useAuthStore((s) => s.setUser);
-
   const profileName = useAuthStore((s) => s.name);
   const profileEmail = useAuthStore((s) => s.email);
   const profilePhone = useAuthStore((s) => s.phone);
@@ -84,6 +68,8 @@ export function CheckoutSheet({
   const idempotencyKeyRef = useRef(crypto.randomUUID());
   const cancelledRef = useRef(false);
   const expiryHandledRef = useRef(false);
+  const holdInFlightRef = useRef(false);
+  const payInFlightRef = useRef(false);
 
   useEffect(() => {
     setName(profileName ?? '');
@@ -93,6 +79,7 @@ export function CheckoutSheet({
 
   const doCancel = useCallback(
     async (reason: 'close' | 'expired' = 'close') => {
+      if (payInFlightRef.current) return;
       if (cancelledRef.current) return;
       if (!reservationId) {
         onClose();
@@ -138,6 +125,10 @@ export function CheckoutSheet({
 
   const holdMutation = useMutation({
     mutationFn: async () => {
+      if (holdInFlightRef.current) {
+        throw new Error('Reservation request already in progress');
+      }
+      holdInFlightRef.current = true;
       const user = await upsertUser({
         name: name.trim(),
         email: email.trim(),
@@ -154,11 +145,12 @@ export function CheckoutSheet({
       return { user, reservation };
     },
     onSuccess: ({ user, reservation }) => {
-      setUser({
-        id: user.id,
+      holdInFlightRef.current = false;
+      useAuthStore.setState({
+        userId: user.id,
         name: user.name,
         email: user.email,
-        phone: user.phone,
+        phone: user.phone ?? null,
       });
       setReservationId(reservation.id);
       setExpiresAt(reservation.expiresAt);
@@ -169,9 +161,10 @@ export function CheckoutSheet({
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
     },
     onError: (err) => {
-      setError(getErrorMessage(err));
+      holdInFlightRef.current = false;
+      const status = extractApiStatus(err);
+      setError(extractApiError(err, STATUS_MESSAGES[status ?? 0] ?? 'Something went wrong. Please try again.'));
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
-      const status = isAxiosError(err) ? err.response?.status : undefined;
       if (status === 409 || status === 410) {
         setSeatsUnavailableError(true);
       }
@@ -180,6 +173,10 @@ export function CheckoutSheet({
 
   const payMutation = useMutation({
     mutationFn: async () => {
+      if (payInFlightRef.current) {
+        throw new Error('Payment request already in progress');
+      }
+      payInFlightRef.current = true;
       if (!reservationId) {
         throw new Error('No active reservation');
       }
@@ -199,9 +196,10 @@ export function CheckoutSheet({
       router.push(`/booking/${booking.id}`);
     },
     onError: (err) => {
-      setError(getErrorMessage(err));
+      payInFlightRef.current = false;
+      const status = extractApiStatus(err);
+      setError(extractApiError(err, STATUS_MESSAGES[status ?? 0] ?? 'Something went wrong. Please try again.'));
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
-      const status = isAxiosError(err) ? err.response?.status : undefined;
       if (status === 409 || status === 410) {
         setSeatsUnavailableError(true);
       }
@@ -210,6 +208,7 @@ export function CheckoutSheet({
 
   function handleHoldSubmit(e: FormEvent) {
     e.preventDefault();
+    if (holdInFlightRef.current) return;
     setError(null);
     setSeatsUnavailableError(false);
 
@@ -223,6 +222,7 @@ export function CheckoutSheet({
 
   function handlePaySubmit(e: FormEvent) {
     e.preventDefault();
+    if (payInFlightRef.current) return;
     setError(null);
     setSeatsUnavailableError(false);
     payMutation.mutate();

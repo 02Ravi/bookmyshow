@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { ShowSeatStatus } from '../../generated/prisma/client';
 import type { BookingToolsContext } from './context';
 
 function getTodayDateString(): string {
@@ -27,7 +28,9 @@ export function createListShowsTool(ctx: BookingToolsContext) {
             endTime: show.endTime,
             theatreName: show.theatreName,
             screenName: show.screenName,
-            availableSeats: seats.filter((seat) => seat.status === 'AVAILABLE')
+            availableSeats: seats.filter(
+              (seat) => seat.status === ShowSeatStatus.AVAILABLE,
+            )
               .length,
           };
         }),

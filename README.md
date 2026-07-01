@@ -2,6 +2,10 @@
 
 Monorepo for the BookMyShow ticketing platform.
 
+## Architecture
+
+BookMyShow is a modular monolith: a NestJS backend handles catalog, reservations, bookings, auth, and agent-chat in domain modules backed by Postgres (Prisma), while Redis is used for ephemeral hold/session coordination and short-lived agent turn locks. Real-time seat updates are emitted through Socket.IO room events (`show:{showId}`), and the agent layer composes tool calls plus an enrichment pass to always return UI-ready prompts to the frontend.
+
 ## Structure
 
 ```
@@ -68,7 +72,10 @@ The app runs at [http://localhost:3000](http://localhost:3000).
 | `REDIS_HOST`              | `localhost`              | Redis host |
 | `REDIS_PORT`              | `6379`                   | Redis port |
 | `CORS_ORIGINS`            | `http://localhost:3000,http://localhost:3002` | Comma-separated allowed browser origins for API CORS |
+| `FRONTEND_URL`            | `http://localhost:3000`  | Legacy single-origin CORS fallback when `CORS_ORIGINS` is unset |
 | `RECONCILE_CRON_INTERVAL` | every minute             | Cron for orphaned hold cleanup (see `backend/.env.example`) |
+| `GOOGLE_GENERATIVE_AI_API_KEY` | *(required for agent)* | Gemini key used by `/agent/chat` |
+| `DEMO_FAST_HOLD`          | `false`                  | Forces short (10s) reservation holds for demos |
 
 ### Frontend (`frontend/.env.local`)
 

@@ -1,4 +1,4 @@
-import { Injectable } from '@nestjs/common';
+import { ConflictException, Injectable } from '@nestjs/common';
 import {
   ReservationStatus,
   ShowSeatStatus,
@@ -41,10 +41,15 @@ export class ReservationReconcileService {
       }));
 
     await this.prisma.$transaction(async (tx) => {
-      await tx.reservation.update({
-        where: { id: reservationId },
+      const updatedReservation = await tx.reservation.updateMany({
+        where: { id: reservationId, status: ReservationStatus.ACTIVE },
         data: { status: ReservationStatus.EXPIRED },
       });
+      if (updatedReservation.count !== 1) {
+        throw new ConflictException(
+          `Reservation ${reservationId} is no longer ACTIVE`,
+        );
+      }
 
       for (const rs of reservation.reservationSeats) {
         if (rs.showSeat.status !== ShowSeatStatus.HELD) {

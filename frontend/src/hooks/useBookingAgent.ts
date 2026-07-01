@@ -7,6 +7,7 @@ import {
   AgentToolCall,
   sendAgentMessage,
 } from '@/lib/agent-api';
+import { extractApiError } from '@/lib/api';
 import { useAuthStore } from '@/stores/authStore';
 import {
   ChatMessage,
@@ -210,8 +211,10 @@ export function useBookingAgent() {
           router.push(data.redirectTo);
         }
       } catch (error) {
-        const message =
-          error instanceof Error ? error.message : 'Something went wrong. Please try again.';
+        const message = extractApiError(
+          error,
+          'Something went wrong. Please try again.',
+        );
 
         setMessages((current) => [
           ...current,
@@ -230,7 +233,6 @@ export function useBookingAgent() {
 
   return {
     messages,
-    sessionId,
     loading,
     inputLocked,
     sendMessage,

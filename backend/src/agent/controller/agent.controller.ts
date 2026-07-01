@@ -1,4 +1,10 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  HttpException,
+  HttpStatus,
+  Post,
+} from '@nestjs/common';
 import { type ModelMessage } from 'ai';
 import { randomUUID } from 'node:crypto';
 import { AuthService } from '../../auth/service/auth.service';
@@ -38,27 +44,45 @@ export class AgentController {
 
   @Post('chat')
   async chat(@Body() dto: AgentChatDto): Promise<AgentChatResponse> {
-    const { sessionId, session, loopResult } = await this.runTurn(dto);
-    const enriched = await enrichToolCalls({
-      loopResult,
-      session,
-      lastUserMessage: dto.message,
-      catalog: this.catalog,
-      reservation: this.reservation,
-      booking: this.booking,
-      sessionId,
-    });
-    const { text, redirectTo } = extractRedirect(enriched.text);
+    const requestSessionId = dto.sessionId ?? randomUUID();
+    const lockAcquired =
+      await this.sessionService.acquireTurnLock(requestSessionId);
 
-    session.messages.push({ role: 'assistant', content: text });
-    await this.sessionService.saveSession(sessionId, session);
+    if (!lockAcquired) {
+      throw new HttpException(
+        'Previous message still processing, please wait',
+        HttpStatus.TOO_MANY_REQUESTS,
+      );
+    }
 
-    return {
-      text,
-      toolCalls: filterClientToolCalls(enriched.toolCalls),
-      sessionId,
-      redirectTo,
-    };
+    try {
+      const { sessionId, session, loopResult } = await this.runTurn({
+        ...dto,
+        sessionId: requestSessionId,
+      });
+      const enriched = await enrichToolCalls({
+        loopResult,
+        session,
+        lastUserMessage: dto.message,
+        catalog: this.catalog,
+        reservation: this.reservation,
+        booking: this.booking,
+        sessionId,
+      });
+      const { text, redirectTo } = extractRedirect(enriched.text);
+
+      session.messages.push({ role: 'assistant', content: text });
+      await this.sessionService.saveSession(sessionId, session);
+
+      return {
+        text,
+        toolCalls: filterClientToolCalls(enriched.toolCalls),
+        sessionId,
+        redirectTo,
+      };
+    } finally {
+      await this.sessionService.releaseTurnLock(requestSessionId);
+    }
   }
 
   private async runTurn(dto: AgentChatDto) {

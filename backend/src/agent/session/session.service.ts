@@ -89,8 +89,23 @@ export class SessionService {
     return session;
   }
 
+  async acquireTurnLock(sessionId: string, ttlSeconds = 30): Promise<boolean> {
+    const result = await this.redis
+      .getClient()
+      .set(this.getLockKey(sessionId), '1', 'EX', ttlSeconds, 'NX');
+    return result === 'OK';
+  }
+
+  async releaseTurnLock(sessionId: string): Promise<void> {
+    await this.redis.getClient().del(this.getLockKey(sessionId));
+  }
+
   private getKey(sessionId: string): string {
     return `agent:session:${sessionId}`;
+  }
+
+  private getLockKey(sessionId: string): string {
+    return `agent:lock:${sessionId}`;
   }
 
   private parseMessages(raw: string | undefined): AgentStoredMessage[] {

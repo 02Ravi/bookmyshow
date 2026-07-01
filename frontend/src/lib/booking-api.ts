@@ -100,10 +100,6 @@ export async function createBooking(payload: {
   return data;
 }
 
-export async function cancelReservation(reservationId: string): Promise<void> {
-  await cancelReservationSafe(reservationId);
-}
-
 export async function fetchBookingById(id: string): Promise<BookingDetail> {
   const { data } = await api.get<BookingDetail>(`/bookings/${id}`);
   return data;

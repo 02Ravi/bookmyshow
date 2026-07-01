@@ -1,4 +1,5 @@
 import { ConflictException } from '@nestjs/common';
+import { ShowSeatStatus } from '../../generated/prisma/client';
 import { BookingService } from '../../booking/service/booking.service';
 import { CatalogService } from '../../catalog/service/catalog.service';
 import { ReservationService } from '../../reservation/service/reservation.service';
@@ -426,9 +427,9 @@ function parseSeatList(result: unknown): SeatChoiceSource[] {
       typeof seat.row !== 'string' ||
       typeof seat.number !== 'number' ||
       typeof seat.type !== 'string' ||
-      (seat.status !== 'AVAILABLE' &&
-        seat.status !== 'HELD' &&
-        seat.status !== 'BOOKED')
+      (seat.status !== ShowSeatStatus.AVAILABLE &&
+        seat.status !== ShowSeatStatus.HELD &&
+        seat.status !== ShowSeatStatus.BOOKED)
     ) {
       return [];
     }
@@ -635,7 +636,9 @@ async function fetchShowsWithAvailability(
         startTime: show.startTime,
         theatreName: show.theatreName,
         screenName: show.screenName,
-        availableSeats: seats.filter((seat) => seat.status === 'AVAILABLE').length,
+        availableSeats: seats.filter(
+          (seat) => seat.status === ShowSeatStatus.AVAILABLE,
+        ).length,
       };
     }),
   );

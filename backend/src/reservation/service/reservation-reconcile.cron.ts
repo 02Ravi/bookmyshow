@@ -1,15 +1,3 @@
-/**
- * MANUAL TEST — orphaned hold backstop
- *
- * 1. Set NEXT_PUBLIC_DEMO_FAST_HOLD=true on frontend (10s hold) or pass holdDurationSeconds: 10.
- * 2. Optional: set RECONCILE_CRON_INTERVAL to every-10s cron (e.g. star-slash-10 * * * * *) for demo.
- * 3. Hold a seat via "Hold my seats"; note showSeatId and expiresAt.
- * 4. Close the browser tab immediately (no Cancel, no countdown DELETE).
- * 5. Poll GET /shows/:showId/seats every few seconds.
- * 6. Expect: seat returns to AVAILABLE within one cron interval after expiresAt,
- *    without any client calling DELETE /reservations/:id.
- * 7. Confirm backend log: "Reconciled N/N expired ACTIVE reservations" (or debug silence when empty).
- */
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { CronExpression, SchedulerRegistry } from '@nestjs/schedule';
