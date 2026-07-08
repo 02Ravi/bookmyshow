@@ -2,13 +2,10 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import { Test, TestingModule } from '@nestjs/testing';
 import request from 'supertest';
 import { App } from 'supertest/types';
-import { seatHoldKey } from '../common/redis-hold.keys';
-import {
-  ReservationStatus,
-  ShowSeatStatus,
-} from '../generated/prisma/client';
 import { AppModule } from '../app.module';
+import { HoldService } from '../hold/service/hold.service';
 import { PrismaService } from '../prisma/prisma.service';
+import { showHoldsKey, holdTokenKey } from '../common/redis.keys';
 import { RedisService } from '../redis/redis.service';
 
 const hasDatabase = Boolean(process.env.DATABASE_URL);
@@ -19,10 +16,12 @@ const hasDatabase = Boolean(process.env.DATABASE_URL);
     let app: INestApplication<App>;
     let prisma: PrismaService;
     let redis: RedisService;
+    let holdService: HoldService;
 
     let userId: string;
-    let reservationId: string;
-    let showSeatIds: string[] = [];
+    let showId: string;
+    let holdToken: string;
+    let seatLabels: string[] = [];
     const idempotencyKey = `test-idem-${Date.now()}`;
 
     beforeAll(async () => {
@@ -38,6 +37,7 @@ const hasDatabase = Boolean(process.env.DATABASE_URL);
 
       prisma = moduleFixture.get(PrismaService);
       redis = moduleFixture.get(RedisService);
+      holdService = moduleFixture.get(HoldService);
     });
 
     afterAll(async () => {
@@ -53,58 +53,40 @@ const hasDatabase = Boolean(process.env.DATABASE_URL);
       });
       userId = user.id;
 
-      const showSeats = await prisma.showSeat.findMany({
-        where: { status: ShowSeatStatus.AVAILABLE },
-        take: 2,
+      const show = await prisma.show.findFirst({
+        include: { screen: true },
       });
-
-      if (showSeats.length < 2) {
-        throw new Error('Need at least 2 AVAILABLE show seats in the database');
+      if (!show) {
+        throw new Error('Need at least one Show in the database (run seed)');
       }
+      showId = show.id;
+      seatLabels = ['A1', 'A2'];
 
-      showSeatIds = showSeats.map((s) => s.id);
-
-      await prisma.showSeat.updateMany({
-        where: { id: { in: showSeatIds } },
-        data: { status: ShowSeatStatus.HELD },
+      const hold = await holdService.createHold({
+        userId,
+        showId,
+        seatLabels,
+        holdDurationSeconds: 120,
       });
-
-      const reservation = await prisma.reservation.create({
-        data: {
-          userId,
-          status: ReservationStatus.ACTIVE,
-          expiresAt: new Date(Date.now() + 15 * 60 * 1000),
-          reservationSeats: {
-            create: showSeatIds.map((showSeatId) => ({ showSeatId })),
-          },
-        },
-      });
-      reservationId = reservation.id;
-
-      for (const showSeatId of showSeatIds) {
-        await redis.getClient().set(seatHoldKey(showSeatId), reservationId);
-      }
+      holdToken = hold.token;
     });
 
     afterEach(async () => {
-      await prisma.bookingSeat.deleteMany({
-        where: { booking: { reservationId } },
+      await prisma.bookedSeat.deleteMany({
+        where: { booking: { idempotencyKey } },
       });
-      await prisma.booking.deleteMany({ where: { reservationId } });
-      await prisma.reservationSeat.deleteMany({ where: { reservationId } });
-      await prisma.reservation.deleteMany({ where: { id: reservationId } });
+      await prisma.booking.deleteMany({ where: { idempotencyKey } });
       await prisma.user.deleteMany({ where: { id: userId } });
-      await prisma.showSeat.updateMany({
-        where: { id: { in: showSeatIds } },
-        data: { status: ShowSeatStatus.AVAILABLE },
-      });
-      if (showSeatIds.length > 0) {
-        await redis.deleteHoldKeys(showSeatIds);
+      if (seatLabels.length > 0) {
+        await redis.getClient().zrem(showHoldsKey(showId), ...seatLabels);
+      }
+      if (holdToken) {
+        await redis.getClient().del(holdTokenKey(holdToken));
       }
     });
 
     it('returns the same booking id when POST /bookings is called twice with the same idempotencyKey', async () => {
-      const body = { reservationId, idempotencyKey };
+      const body = { holdToken, idempotencyKey };
 
       const first = await request(app.getHttpServer())
         .post('/bookings')
@@ -122,6 +104,11 @@ const hasDatabase = Boolean(process.env.DATABASE_URL);
         where: { idempotencyKey },
       });
       expect(count).toBe(1);
+
+      const booked = await prisma.bookedSeat.count({
+        where: { bookingId: first.body.id },
+      });
+      expect(booked).toBe(2);
     });
   },
 );

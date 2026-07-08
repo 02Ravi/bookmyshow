@@ -8,7 +8,7 @@ const choice = z.object({
 
 export function createUiPromptTool() {
   const seat = z.object({
-    showSeatId: z.string().uuid(),
+    seatLabel: z.string(),
     row: z.string(),
     number: z.number(),
     type: z.string(),

@@ -1,4 +1,4 @@
-import { BookingStatus, SeatType } from '../../generated/prisma/client';
+import { BookingStatus } from '../../generated/prisma/client';
 
 export interface BookingMovieSummaryDto {
   id: string;
@@ -21,10 +21,10 @@ export interface BookingShowSummaryDto {
 }
 
 export interface BookingSeatDto {
-  showSeatId: string;
+  seatLabel: string;
   row: string;
   number: number;
-  type: SeatType;
+  type: string;
   price: string;
 }
 
@@ -32,7 +32,7 @@ export interface BookingDetailDto {
   id: string;
   status: BookingStatus;
   idempotencyKey: string;
-  reservationId: string;
+  totalPrice: string;
   userId: string;
   createdAt: Date;
   show: BookingShowSummaryDto;
@@ -43,7 +43,7 @@ export interface BookingListItemDto {
   id: string;
   status: BookingStatus;
   idempotencyKey: string;
-  reservationId: string;
+  totalPrice: string;
   userId: string;
   createdAt: Date;
   seatCount: number;
@@ -54,29 +54,35 @@ type BookingWithRelations = {
   id: string;
   status: BookingStatus;
   idempotencyKey: string;
-  reservationId: string;
+  totalPrice: { toString(): string };
   userId: string;
   createdAt: Date;
-  bookingSeats: Array<{
-    showSeat: {
+  bookedSeats: Array<{
+    seatLabel: string;
+    type: string;
+    price: { toString(): string };
+    show: {
       id: string;
-      price: { toString(): string };
-      seat: { row: string; number: number; type: SeatType };
-      show: {
-        id: string;
-        startTime: Date;
-        endTime: Date;
-        movie: { id: string; title: string; posterUrl: string };
-        screen: {
-          theatre: { id: string; name: string; city: string };
-        };
+      startTime: Date;
+      endTime: Date;
+      movie: { id: string; title: string; posterUrl: string };
+      screen: {
+        theatre: { id: string; name: string; city: string };
       };
     };
   }>;
 };
 
+function parseSeatLabel(seatLabel: string): { row: string; number: number } {
+  const match = /^([A-Za-z]+)(\d+)$/.exec(seatLabel);
+  if (!match) {
+    return { row: seatLabel, number: 0 };
+  }
+  return { row: match[1], number: Number(match[2]) };
+}
+
 function mapShow(
-  show: BookingWithRelations['bookingSeats'][0]['showSeat']['show'],
+  show: BookingWithRelations['bookedSeats'][0]['show'],
 ): BookingShowSummaryDto {
   return {
     id: show.id,
@@ -98,7 +104,7 @@ function mapShow(
 export function toBookingDetailDto(
   booking: BookingWithRelations,
 ): BookingDetailDto {
-  const firstSeat = booking.bookingSeats[0]?.showSeat;
+  const firstSeat = booking.bookedSeats[0];
   if (!firstSeat) {
     throw new Error('Booking has no seats');
   }
@@ -107,24 +113,27 @@ export function toBookingDetailDto(
     id: booking.id,
     status: booking.status,
     idempotencyKey: booking.idempotencyKey,
-    reservationId: booking.reservationId,
+    totalPrice: booking.totalPrice.toString(),
     userId: booking.userId,
     createdAt: booking.createdAt,
     show: mapShow(firstSeat.show),
-    seats: booking.bookingSeats.map((bs) => ({
-      showSeatId: bs.showSeat.id,
-      row: bs.showSeat.seat.row,
-      number: bs.showSeat.seat.number,
-      type: bs.showSeat.seat.type,
-      price: bs.showSeat.price.toString(),
-    })),
+    seats: booking.bookedSeats.map((bs) => {
+      const { row, number } = parseSeatLabel(bs.seatLabel);
+      return {
+        seatLabel: bs.seatLabel,
+        row,
+        number,
+        type: bs.type,
+        price: bs.price.toString(),
+      };
+    }),
   };
 }
 
 export function toBookingListItemDto(
   booking: BookingWithRelations,
 ): BookingListItemDto {
-  const firstSeat = booking.bookingSeats[0]?.showSeat;
+  const firstSeat = booking.bookedSeats[0];
   if (!firstSeat) {
     throw new Error('Booking has no seats');
   }
@@ -133,28 +142,23 @@ export function toBookingListItemDto(
     id: booking.id,
     status: booking.status,
     idempotencyKey: booking.idempotencyKey,
-    reservationId: booking.reservationId,
+    totalPrice: booking.totalPrice.toString(),
     userId: booking.userId,
     createdAt: booking.createdAt,
-    seatCount: booking.bookingSeats.length,
+    seatCount: booking.bookedSeats.length,
     show: mapShow(firstSeat.show),
   };
 }
 
 export const bookingDetailInclude = {
-  bookingSeats: {
+  bookedSeats: {
     include: {
-      showSeat: {
+      show: {
         include: {
-          seat: true,
-          show: {
+          movie: { select: { id: true, title: true, posterUrl: true } },
+          screen: {
             include: {
-              movie: { select: { id: true, title: true, posterUrl: true } },
-              screen: {
-                include: {
-                  theatre: { select: { id: true, name: true, city: true } },
-                },
-              },
+              theatre: { select: { id: true, name: true, city: true } },
             },
           },
         },

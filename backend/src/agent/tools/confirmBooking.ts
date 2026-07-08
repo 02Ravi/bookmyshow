@@ -6,24 +6,21 @@ export function createConfirmBookingTool(ctx: BookingToolsContext) {
 
   return {
     description:
-      'Confirm the active reservation in this session and create a booking.',
+      'Confirm the active seat hold in this session and create a booking.',
     inputSchema,
     execute: async () => {
       if (!ctx.session.reservationId) {
-        throw new Error('There is no active reservation in this session to confirm.');
+        throw new Error(
+          'There is no active seat hold in this session to confirm.',
+        );
       }
 
-      const result = await ctx.booking.createFromReservation({
-        reservationId: ctx.session.reservationId,
+      const result = await ctx.booking.createFromHold({
+        holdToken: ctx.session.reservationId,
         idempotencyKey: `agent-${ctx.sessionId}-${Date.now()}`,
       });
 
       ctx.session.reservationId = null;
-
-      const totalPrice = result.booking.seats.reduce(
-        (sum, seat) => sum + Number(seat.price),
-        0,
-      );
 
       return {
         bookingId: result.booking.id,
@@ -35,7 +32,7 @@ export function createConfirmBookingTool(ctx: BookingToolsContext) {
           type: seat.type,
           price: seat.price,
         })),
-        totalPrice: totalPrice.toFixed(2),
+        totalPrice: result.booking.totalPrice,
       };
     },
   };

@@ -7,21 +7,21 @@ import { REALTIME_EVENTS } from './realtime-events';
 export class RealtimeService {
   constructor(private readonly gateway: RealtimeGateway) {}
 
-  emitSeatHeld(showId: string, seatId: string, reservationId: string) {
+  emitSeatHeld(showId: string, seatLabel: string, holdToken: string) {
     this.gateway.server
       ?.to(showRoomKey(showId))
-      .emit(REALTIME_EVENTS.SEAT_HELD, { showId, seatId, reservationId });
+      .emit(REALTIME_EVENTS.SEAT_HELD, { showId, seatLabel, holdToken });
   }
 
-  emitSeatReleased(showId: string, seatId: string) {
+  emitSeatReleased(showId: string, seatLabel: string) {
     this.gateway.server
       ?.to(showRoomKey(showId))
-      .emit(REALTIME_EVENTS.SEAT_RELEASED, { showId, seatId });
+      .emit(REALTIME_EVENTS.SEAT_RELEASED, { showId, seatLabel });
   }
 
-  emitSeatBooked(showId: string, seatId: string, bookingId: string) {
+  emitSeatBooked(showId: string, seatLabel: string, bookingId: string) {
     this.gateway.server
       ?.to(showRoomKey(showId))
-      .emit(REALTIME_EVENTS.SEAT_BOOKED, { showId, seatId, bookingId });
+      .emit(REALTIME_EVENTS.SEAT_BOOKED, { showId, seatLabel, bookingId });
   }
 }

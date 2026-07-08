@@ -3,7 +3,7 @@ import { create } from 'zustand';
 interface CartState {
   showId: string | null;
   selectedIds: string[];
-  toggleSeat: (showId: string, showSeatId: string) => void;
+  toggleSeat: (showId: string, seatLabel: string) => void;
   removeSeats: (showId: string, ids: string[]) => void;
   clearCart: () => void;
 }
@@ -11,17 +11,17 @@ interface CartState {
 export const useCartStore = create<CartState>((set, get) => ({
   showId: null,
   selectedIds: [],
-  toggleSeat: (showId, showSeatId) => {
+  toggleSeat: (showId, seatLabel) => {
     const state = get();
     if (state.showId !== showId) {
-      set({ showId, selectedIds: [showSeatId] });
+      set({ showId, selectedIds: [seatLabel] });
       return;
     }
     const next = new Set(state.selectedIds);
-    if (next.has(showSeatId)) {
-      next.delete(showSeatId);
+    if (next.has(seatLabel)) {
+      next.delete(seatLabel);
     } else {
-      next.add(showSeatId);
+      next.add(seatLabel);
     }
     set({ selectedIds: [...next] });
   },

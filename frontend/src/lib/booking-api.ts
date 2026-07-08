@@ -5,29 +5,27 @@ export type { SeatStatus };
 export type SeatType = 'REGULAR' | 'PREMIUM' | 'RECLINER';
 
 export interface ShowSeat {
-  showSeatId: string;
-  seatId: string;
+  seatLabel: string;
   row: string;
   number: number;
-  type: SeatType;
+  type: SeatType | string;
   status: SeatStatus;
   price: string;
 }
 
-export interface Reservation {
-  id: string;
+export interface HoldResponse {
+  token: string;
   userId: string;
-  status: string;
-  expiresAt: string;
   showId: string;
-  showSeatIds: string[];
+  seatLabels: string[];
+  expiresAt: string;
 }
 
 export interface Booking {
   id: string;
   status: string;
   idempotencyKey: string;
-  reservationId: string;
+  totalPrice: string;
   userId: string;
   createdAt: string;
 }
@@ -53,10 +51,10 @@ export interface BookingShowSummary {
 }
 
 export interface BookingSeat {
-  showSeatId: string;
+  seatLabel: string;
   row: string;
   number: number;
-  type: SeatType;
+  type: SeatType | string;
   price: string;
 }
 
@@ -75,26 +73,26 @@ export async function fetchShowSeats(showId: string): Promise<ShowSeat[]> {
   return data;
 }
 
-export async function createReservation(payload: {
+export async function createHold(payload: {
   userId: string;
   showId: string;
-  showSeatIds: string[];
+  seatLabels: string[];
   holdDurationSeconds?: number;
-}): Promise<Reservation> {
-  const { data } = await api.post<Reservation>('/reservations', payload);
+}): Promise<HoldResponse> {
+  const { data } = await api.post<HoldResponse>('/holds', payload);
   return data;
 }
 
-export async function cancelReservationSafe(reservationId: string): Promise<void> {
+export async function releaseHoldSafe(token: string): Promise<void> {
   try {
-    await api.delete(`/reservations/${reservationId}`);
+    await api.delete(`/holds/${token}`);
   } catch {
     // No-op if already cancelled, confirmed, or not found
   }
 }
 
 export async function createBooking(payload: {
-  reservationId: string;
+  holdToken: string;
   idempotencyKey: string;
 }): Promise<Booking> {
   const { data } = await api.post<Booking>('/bookings', payload);

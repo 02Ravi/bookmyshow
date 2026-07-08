@@ -5,7 +5,7 @@ import { AuthService } from '../../auth/service/auth.service';
 import { BookingService } from '../../booking/service/booking.service';
 import { CatalogService } from '../../catalog/service/catalog.service';
 import { PrismaService } from '../../prisma/prisma.service';
-import { ReservationService } from '../../reservation/service/reservation.service';
+import { HoldService } from '../../hold/service/hold.service';
 import { buildSystemPrompt } from '../scout/buildSystemPrompt';
 import { enrichToolCalls } from '../scout/enrichToolCalls';
 import { runAgentLoop } from '../scout/agentLoop';
@@ -54,7 +54,7 @@ export class AgentChatService {
     private readonly booking: BookingService,
     private readonly catalog: CatalogService,
     private readonly prisma: PrismaService,
-    private readonly reservation: ReservationService,
+    private readonly hold: HoldService,
     private readonly sessionService: SessionService,
   ) {}
 
@@ -80,7 +80,7 @@ export class AgentChatService {
         session,
         lastUserMessage: dto.message,
         catalog: this.catalog,
-        reservation: this.reservation,
+        hold: this.hold,
         booking: this.booking,
         auth: this.auth,
         sessionId,
@@ -162,7 +162,7 @@ export class AgentChatService {
       auth: this.auth,
       booking: this.booking,
       catalog: this.catalog,
-      reservation: this.reservation,
+      hold: this.hold,
       session,
       sessionId,
     };

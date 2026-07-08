@@ -42,7 +42,7 @@ export function SeatMap({ showId }: SeatMapProps) {
   }, [cartShowId, showId, cartSelectedIds]);
 
   const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [activeReservationSeatIds, setActiveReservationSeatIds] = useState<
+  const [activeHeldSeatLabels, setActiveHeldSeatLabels] = useState<
     string[]
   >([]);
   const [holdExpiredMessage, setHoldExpiredMessage] = useState<string | null>(
@@ -59,7 +59,7 @@ export function SeatMap({ showId }: SeatMapProps) {
   const rows = useMemo(() => groupSeatsByRow(seats), [seats]);
 
   const selectedSeats = useMemo(
-    () => seats.filter((s) => selectedIds.has(s.showSeatId)),
+    () => seats.filter((s) => selectedIds.has(s.seatLabel)),
     [seats, selectedIds],
   );
 
@@ -68,19 +68,19 @@ export function SeatMap({ showId }: SeatMapProps) {
     [selectedSeats],
   );
 
-  const activeReservationSeatIdSet = useMemo(
-    () => new Set(activeReservationSeatIds),
-    [activeReservationSeatIds],
+  const activeHeldSeatLabelSet = useMemo(
+    () => new Set(activeHeldSeatLabels),
+    [activeHeldSeatLabels],
   );
 
   useEffect(() => {
     if (cartShowId !== showId || seats.length === 0) return;
     const takenIds = cartSelectedIds.filter((id) => {
-      const seat = seats.find((s) => s.showSeatId === id);
+      const seat = seats.find((s) => s.seatLabel === id);
       if (!seat || seat.status === 'AVAILABLE') return false;
       if (
         seat.status === 'HELD' &&
-        activeReservationSeatIdSet.has(seat.showSeatId)
+        activeHeldSeatLabelSet.has(seat.seatLabel)
       ) {
         return false;
       }
@@ -93,13 +93,13 @@ export function SeatMap({ showId }: SeatMapProps) {
     showId,
     cartSelectedIds,
     removeSeats,
-    activeReservationSeatIdSet,
+    activeHeldSeatLabelSet,
   ]);
 
   const toggleSeat = useCallback(
     (seat: ShowSeat) => {
       if (seat.status !== 'AVAILABLE') return;
-      toggleSeatInCart(showId, seat.showSeatId);
+      toggleSeatInCart(showId, seat.seatLabel);
     },
     [showId, toggleSeatInCart],
   );
@@ -108,7 +108,7 @@ export function SeatMap({ showId }: SeatMapProps) {
     if (seat.status === 'BOOKED' || seat.status === 'HELD') {
       return 'bms-seat bms-seat-sold';
     }
-    if (selectedIds.has(seat.showSeatId)) {
+    if (selectedIds.has(seat.seatLabel)) {
       return 'bms-seat bms-seat-selected';
     }
     return 'bms-seat bms-seat-available';
@@ -116,13 +116,13 @@ export function SeatMap({ showId }: SeatMapProps) {
 
   function handleCheckoutClose() {
     setCheckoutOpen(false);
-    setActiveReservationSeatIds([]);
+    setActiveHeldSeatLabels([]);
   }
 
   function handleSeatsUnavailable() {
     clearCart();
     setCheckoutOpen(false);
-    setActiveReservationSeatIds([]);
+    setActiveHeldSeatLabels([]);
   }
 
   function handleHoldExpired() {
@@ -130,7 +130,7 @@ export function SeatMap({ showId }: SeatMapProps) {
       'Your seat hold expired, please select seats again.',
     );
     clearCart();
-    setActiveReservationSeatIds([]);
+    setActiveHeldSeatLabels([]);
   }
 
   function handleProceed() {
@@ -192,7 +192,7 @@ export function SeatMap({ showId }: SeatMapProps) {
               <div className="flex gap-1">
                 {rowSeats.map((seat) => (
                   <button
-                    key={seat.showSeatId}
+                    key={seat.seatLabel}
                     type="button"
                     className={seatClassName(seat)}
                     disabled={seat.status !== 'AVAILABLE'}
@@ -240,7 +240,7 @@ export function SeatMap({ showId }: SeatMapProps) {
           total={total}
           onClose={handleCheckoutClose}
           onSeatsUnavailable={handleSeatsUnavailable}
-          onReservationHeld={setActiveReservationSeatIds}
+          onHoldHeld={setActiveHeldSeatLabels}
           onHoldExpired={handleHoldExpired}
         />
       )}

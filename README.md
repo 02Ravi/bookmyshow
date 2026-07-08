@@ -4,7 +4,7 @@ Monorepo for the BookMyShow ticketing platform.
 
 ## Architecture
 
-BookMyShow is a modular monolith: a NestJS backend handles catalog, reservations, bookings, auth, and agent-chat in domain modules backed by Postgres (Prisma), while Redis is used for ephemeral hold/session coordination and short-lived agent turn locks. Real-time seat updates are emitted through Socket.IO room events (`show:{showId}`), and the agent layer composes tool calls plus an enrichment pass to always return UI-ready prompts to the frontend.
+BookMyShow is a modular monolith: a NestJS backend handles catalog, Redis-only seat holds, bookings, auth, and agent-chat in domain modules backed by Postgres (Prisma). Seat layouts are computed from `Screen.layoutConfig` (no pre-filled Seat/ShowSeat rows). Holds live in Redis sorted sets with Lua atomicity; confirmed seats are sparse `BookedSeat` rows. Real-time seat updates use Socket.IO room events (`show:{showId}`), and the agent layer composes tool calls plus an enrichment pass for UI-ready prompts.
 
 ## Structure
 
@@ -73,9 +73,8 @@ The app runs at [http://localhost:3000](http://localhost:3000).
 | `REDIS_PORT`              | `6379`                   | Redis port |
 | `CORS_ORIGINS`            | `http://localhost:3000,http://localhost:3002` | Comma-separated allowed browser origins for API CORS |
 | `FRONTEND_URL`            | `http://localhost:3000`  | Legacy single-origin CORS fallback when `CORS_ORIGINS` is unset |
-| `RECONCILE_CRON_INTERVAL` | every minute             | Cron for orphaned hold cleanup (see `backend/.env.example`) |
 | `GOOGLE_GENERATIVE_AI_API_KEY` | *(required for agent)* | Gemini key used by `/agent/chat` |
-| `DEMO_FAST_HOLD`          | `false`                  | Forces short (10s) reservation holds for demos |
+| `DEMO_FAST_HOLD`          | `false`                  | Forces short (10s) seat holds for demos |
 
 ### Frontend (`frontend/.env.local`)
 
@@ -88,4 +87,4 @@ The app runs at [http://localhost:3000](http://localhost:3000).
 - Postgres is hosted on Supabase — it is not included in `docker-compose.yml`.
 - Only Redis runs via Docker locally.
 - Health check: `GET /health` on the backend returns `{ "status": "ok" }`.
-- Implemented flows: movie/show catalog, live seat map (WebSockets), seat holds with expiry, booking checkout, and a cron backstop for abandoned holds.
+- Implemented flows: movie/show catalog, live seat map (WebSockets), Redis seat holds with lazy expiry (no cron), booking checkout with sparse `BookedSeat` rows, AI booking agent.

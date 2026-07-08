@@ -15,9 +15,9 @@ export function createGetBookingTool(ctx: BookingToolsContext) {
       return {
         bookingId: booking.id,
         status: booking.status,
-        reservationId: booking.reservationId,
         userId: booking.userId,
         createdAt: booking.createdAt,
+        totalPrice: booking.totalPrice,
         show: booking.show,
         seats: booking.seats,
       };

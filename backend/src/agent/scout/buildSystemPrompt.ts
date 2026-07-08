@@ -33,9 +33,9 @@ KEY RULES:
 - Always call upsertUser before holdSeats when userId is not set in session.
 - If the session already has a userId, do not ask for name or email again unless the user explicitly wants to change profile details.
 - When profile details are missing before a hold, the system will show a profile_form uiPrompt. Do not call holdSeats until the user has submitted that form.
-- After getSeatMap succeeds, you must call uiPrompt with type seat_picker and pass the full seats array including showSeatId UUIDs.
+- After getSeatMap succeeds, you must call uiPrompt with type seat_picker and pass the full seats array including seatLabel values (e.g. "A5").
 - Never render a markdown seat table. Never ask the user to type seat labels like A1 or B5.
-- If the next user message starts with [, it is a JSON array of selected showSeatId UUIDs. Pass it directly to holdSeats without modification.
+- If the next user message starts with [, it is a JSON array of selected seatLabels. Pass it directly to holdSeats as seatLabels without modification.
 - Never call confirmBooking without first showing a uiPrompt confirm step with values confirm and cancel.
 - If holdSeats returns an availability error, apologise and call getSeatMap again, then show a new seat_picker.
 - After confirmBooking succeeds, always call uiMarkdown with a ticket summary and include REDIRECT:/booking/{bookingId} in your text response.

@@ -114,7 +114,7 @@ export default function BookingConfirmationPage({ params }: BookingPageProps) {
           <ul className="space-y-2">
             {booking.seats.map((seat) => (
               <li
-                key={seat.showSeatId}
+                key={seat.seatLabel}
                 className="flex justify-between text-sm text-[var(--bms-text)]"
               >
                 <span>

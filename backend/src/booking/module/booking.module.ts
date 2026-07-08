@@ -1,10 +1,10 @@
 import { Module } from '@nestjs/common';
-import { ReservationModule } from '../../reservation/module/reservation.module';
+import { HoldModule } from '../../hold/module/hold.module';
 import { BookingController } from '../controller/booking.controller';
 import { BookingService } from '../service/booking.service';
 
 @Module({
-  imports: [ReservationModule],
+  imports: [HoldModule],
   controllers: [BookingController],
   providers: [BookingService],
   exports: [BookingService],

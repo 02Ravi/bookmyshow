@@ -8,7 +8,7 @@ export function createGetSeatMapTool(ctx: BookingToolsContext) {
 
   return {
     description:
-      'Get the seat map for a show. Use this before holding seats so human seat labels can be resolved to showSeatIds.',
+      'Get the seat map for a show. Use this before holding seats so seatLabels (e.g. "A5") can be selected.',
     inputSchema,
     execute: async ({ showId }: z.infer<typeof inputSchema>) => {
       const seats = await ctx.catalog.findShowSeats(showId);

@@ -14,8 +14,5 @@ export const AGENT_TURN_LOCK_TTL_SECONDS = 30;
 /** Max tool-call steps the agent loop is allowed per turn. */
 export const AGENT_LOOP_MAX_STEPS = 2;
 
-/** Max reservations reconciled per cron tick. */
-export const RECONCILE_BATCH_SIZE = 100;
-
 /** Max ticket cards rendered at once for a "view my bookings" response. */
 export const MAX_TICKETS_SHOWN = 5;

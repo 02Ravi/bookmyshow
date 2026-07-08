@@ -25,7 +25,7 @@ export class BookingController {
     @Body() dto: CreateBookingDto,
     @Res({ passthrough: true }) res: Response,
   ) {
-    const result = await this.bookingService.createFromReservation(dto);
+    const result = await this.bookingService.createFromHold(dto);
     res.status(result.statusCode);
     return result.booking;
   }

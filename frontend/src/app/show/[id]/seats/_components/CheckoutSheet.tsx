@@ -4,9 +4,9 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { FormEvent, useCallback, useEffect, useRef, useState } from 'react';
 import {
-  cancelReservationSafe,
+  releaseHoldSafe,
   createBooking,
-  createReservation,
+  createHold,
   type ShowSeat,
 } from '@/lib/booking-api';
 import { extractApiError, extractApiStatus } from '@/lib/api';
@@ -23,7 +23,7 @@ interface CheckoutSheetProps {
   total: number;
   onClose: () => void;
   onSeatsUnavailable?: () => void;
-  onReservationHeld?: (seatIds: string[]) => void;
+  onHoldHeld?: (seatIds: string[]) => void;
   onHoldExpired?: () => void;
 }
 
@@ -39,7 +39,7 @@ export function CheckoutSheet({
   total,
   onClose,
   onSeatsUnavailable,
-  onReservationHeld,
+  onHoldHeld,
   onHoldExpired,
 }: CheckoutSheetProps) {
   const router = useRouter();
@@ -55,7 +55,7 @@ export function CheckoutSheet({
   const [error, setError] = useState<string | null>(null);
   const [seatsUnavailableError, setSeatsUnavailableError] = useState(false);
   const [redirecting, setRedirecting] = useState(false);
-  const [reservationId, setReservationId] = useState<string | null>(null);
+  const [holdToken, setHoldToken] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<string | null>(null);
   const [secondsLeft, setSecondsLeft] = useState(0);
 
@@ -75,14 +75,14 @@ export function CheckoutSheet({
     async (reason: 'close' | 'expired' = 'close') => {
       if (payInFlightRef.current) return;
       if (cancelledRef.current) return;
-      if (!reservationId) {
+      if (!holdToken) {
         onClose();
         return;
       }
 
       cancelledRef.current = true;
       try {
-        await cancelReservationSafe(reservationId);
+        await releaseHoldSafe(holdToken);
       } catch {
         // Swallow errors for already cancelled or confirmed reservations
       }
@@ -96,7 +96,7 @@ export function CheckoutSheet({
 
       onClose();
     },
-    [onClose, onHoldExpired, queryClient, reservationId, showId],
+    [onClose, onHoldExpired, queryClient, holdToken, showId],
   );
 
   useEffect(() => {
@@ -127,16 +127,16 @@ export function CheckoutSheet({
         phone: phone.trim() || undefined,
       });
 
-      const reservation = await createReservation({
+      const hold = await createHold({
         userId: user.id,
         showId,
-        showSeatIds: selectedSeats.map((s) => s.showSeatId),
+        seatLabels: selectedSeats.map((s) => s.seatLabel),
         holdDurationSeconds: getDemoHoldDurationSeconds(),
       });
 
-      return { user, reservation };
+      return { user, hold };
     },
-    onSuccess: ({ user, reservation }) => {
+    onSuccess: ({ user, hold }) => {
       holdInFlightRef.current = false;
       useAuthStore.setState({
         userId: user.id,
@@ -144,12 +144,12 @@ export function CheckoutSheet({
         email: user.email,
         phone: user.phone ?? null,
       });
-      setReservationId(reservation.id);
-      setExpiresAt(reservation.expiresAt);
+      setHoldToken(hold.token);
+      setExpiresAt(hold.expiresAt);
       setPhase('paying');
       setError(null);
       setSeatsUnavailableError(false);
-      onReservationHeld?.(reservation.showSeatIds);
+      onHoldHeld?.(hold.seatLabels);
       void queryClient.refetchQueries({ queryKey: ['show-seats', showId] });
     },
     onError: (err) => {
@@ -169,12 +169,12 @@ export function CheckoutSheet({
         throw new Error('Payment request already in progress');
       }
       payInFlightRef.current = true;
-      if (!reservationId) {
+      if (!holdToken) {
         throw new Error('No active reservation');
       }
 
       const booking = await createBooking({
-        reservationId,
+        holdToken,
         idempotencyKey: idempotencyKeyRef.current,
       });
 
@@ -272,7 +272,7 @@ export function CheckoutSheet({
             </p>
             <ul className="mb-3 space-y-1 text-sm text-[var(--bms-text-muted)]">
               {selectedSeats.map((seat) => (
-                <li key={seat.showSeatId}>
+                <li key={seat.seatLabel}>
                   Row {seat.row} · Seat {seat.number} · {seat.type} · ₹
                   {seat.price}
                 </li>

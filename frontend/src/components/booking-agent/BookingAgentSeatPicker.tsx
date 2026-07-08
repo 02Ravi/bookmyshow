@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 import type { SeatStatus } from '@/types/status';
 
 interface SeatPickerSeat {
-  showSeatId: string;
+  seatLabel: string;
   row: string;
   number: number;
   type: string;
@@ -62,21 +62,21 @@ export function BookingAgentSeatPicker({
     selectedIds.length > 0 &&
     (maxSelections > 0 ? selectedIds.length === maxSelections : true);
 
-  const selectedSeats = seats.filter((seat) => selectedIds.includes(seat.showSeatId));
+  const selectedSeats = seats.filter((seat) => selectedIds.includes(seat.seatLabel));
 
-  function toggleSeat(showSeatId: string) {
+  function toggleSeat(seatLabel: string) {
     if (disabled || isSubmitted) return;
 
     setSelectedIds((current) => {
-      if (current.includes(showSeatId)) {
-        return current.filter((id) => id !== showSeatId);
+      if (current.includes(seatLabel)) {
+        return current.filter((id) => id !== seatLabel);
       }
 
       if (maxSelections > 0 && current.length >= maxSelections) {
         return current;
       }
 
-      return [...current, showSeatId];
+      return [...current, seatLabel];
     });
   }
 
@@ -90,7 +90,7 @@ export function BookingAgentSeatPicker({
     if (seat.status !== 'AVAILABLE') {
       return 'bms-seat bms-seat-sold opacity-70';
     }
-    if (selectedIds.includes(seat.showSeatId)) {
+    if (selectedIds.includes(seat.seatLabel)) {
       return 'bms-seat bms-seat-selected ring-2 ring-green-400';
     }
     return 'bms-seat bms-seat-available';
@@ -111,10 +111,10 @@ export function BookingAgentSeatPicker({
             <div className="flex flex-wrap gap-1">
               {rowSeats.map((seat) => (
                 <button
-                  key={seat.showSeatId}
+                  key={seat.seatLabel}
                   type="button"
                   disabled={disabled || isSubmitted || seat.status !== 'AVAILABLE'}
-                  onClick={() => toggleSeat(seat.showSeatId)}
+                  onClick={() => toggleSeat(seat.seatLabel)}
                   className={seatClassName(seat)}
                   title={`${seat.row}${seat.number} - ₹${seat.price}`}
                 >

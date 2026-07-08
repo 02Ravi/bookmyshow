@@ -1,7 +1,7 @@
 # BookMyShow — Core System Design
 
-> **Audience:** Technical reviewer evaluating seat **hold**, **reservation**, **booking**, real-time updates, and the conversational booking agent.  
-> **Scope:** What we built, how it works under normal and failure conditions, and why we stopped short of distributed messaging (Kafka, etc.).
+> **Audience:** Technical reviewer evaluating seat **hold**, **booking**, real-time updates, and the conversational booking agent.  
+
 
 ---
 
@@ -11,13 +11,18 @@ BookMyShow is a **two-package monorepo** (`backend/` NestJS API + `frontend/` Ne
 
 1. Browse movies and showtimes  
 2. Select seats on a live seat map  
-3. **Hold** seats for a bounded time (default **10 minutes**)  
-4. Confirm into a **booking**  
+3. **Hold** seats for a bounded time (default **10 minutes**) — entirely in Redis  
+4. Confirm into a **booking** — sparse `BookedSeat` rows in Postgres  
 5. Optionally **cancel** holds or confirmed bookings  
 
-The system uses **Postgres as the source of truth**, **Redis for ephemeral coordination** (hold keys, agent sessions, turn locks), and **Socket.IO** for push-based seat map refreshes. A **Gemini-powered booking agent** drives the same backend APIs through tools, with a deterministic **enrichment layer** that guarantees structured UI (dropdowns, seat picker, confirm buttons) even when the LLM misbehaves.
+**Key architectural choices (post-refactor):**
 
-We deliberately chose a **modular monolith** over microservices and message buses. That is sufficient for demo-to-mid-scale traffic and keeps hold semantics easy to reason about in one database transaction.
+- **No `Seat` / `ShowSeat` pre-fill.** Screen layout lives as JSON (`layoutConfig`) on `Screen`. Seat lists are computed at read time via `computeSeatsForScreen(layoutConfig, basePrice)`.
+- **No `Reservation` table.** Holds live only in Redis (sorted set + hold token).
+- **No reconciliation cron.** Expired holds are naturally invisible via `ZRANGEBYSCORE` (score = expiry ms). Lazy expiry — no cleanup job.
+- **Postgres `@@unique([showId, seatLabel])` on `BookedSeat`** is the final correctness guarantee for confirmed bookings. Redis is the fast-path concurrency gate for holds.
+
+We deliberately chose a **modular monolith** over microservices. Hold → book stays in one process with one Prisma transaction for booking and one Redis Lua script for atomic holds.
 
 ---
 
@@ -25,391 +30,179 @@ We deliberately chose a **modular monolith** over microservices and message buse
 
 ```
 bookmyshow/
-├── backend/          # NestJS modular monolith (port 3001)
+├── backend/
 │   ├── src/
-│   │   ├── catalog/       # Movies, theatres, shows, seat maps (read)
-│   │   ├── reservation/   # Seat holds + expiry reconciliation
-│   │   ├── booking/       # Confirm booking from hold, cancel booking
+│   │   ├── catalog/       # Movies, theatres, shows; seat maps = computed
+│   │   ├── hold/          # Redis sorted-set holds + hold tokens (POST /holds)
+│   │   ├── booking/       # Confirm from holdToken, cancel booking
 │   │   ├── realtime/      # Socket.IO gateway + emit helpers
-│   │   ├── redis/         # Hold keys, shared Redis client
+│   │   ├── redis/         # Shared ioredis client
 │   │   ├── agent/         # LLM loop, tools, session, enricher
 │   │   └── auth/          # User upsert for checkout/agent
 │   └── prisma/            # Schema, migrations, seed
-├── frontend/         # Next.js App Router (port 3000)
-│   ├── app/               # Pages (seat map, booking detail)
-│   ├── components/booking-agent/  # Chat UI blocks
-│   └── hooks/             # useBookingAgent, useShowSocket
-└── docker-compose.yml  # Redis only (Postgres is external, e.g. Supabase)
+├── frontend/              # Next.js App Router
+└── docker-compose.yml     # Redis only (Postgres is external, e.g. Supabase)
 ```
-
-**Why not multiple services?** Holds require **atomic seat state transitions** across reservation rows and `show_seat` rows. Keeping catalog, reservation, booking, and realtime in one process means one Prisma transaction boundary, one deployment unit, and no cross-service saga for “hold seat → pay → confirm.” Redis and WebSockets are **adjacent infrastructure**, not separate domain services.
 
 ---
 
-## 3. Data model and seat lifecycle
+## 3. Data model
 
-### 3.1 Core entities
+### 3.1 What lives in Postgres
 
 | Entity | Role |
 |--------|------|
-| `ShowSeat` | Per-show instance of a physical seat; carries `status`, `price`, and `version` |
-| `Reservation` | A time-bounded hold (`ACTIVE` → `EXPIRED` or `CONFIRMED`) |
-| `ReservationSeat` | Join table: which `ShowSeat` rows are held |
-| `Booking` | Confirmed purchase linked 1:1 to a reservation |
-| `BookingSeat` | Join table: which seats were booked |
+| `Screen.layoutConfig` | JSON rows: `{ row, seats, type, priceMultiplier }` — source of the seat map |
+| `Show.basePrice` | Decimal; seat price = `basePrice * priceMultiplier` |
+| `Booking` | Confirmed purchase (`status`, `totalPrice`, `idempotencyKey`) |
+| `BookedSeat` | Sparse occupied seats: `(showId, seatLabel)` unique; denormalized `type` + `price` |
 
-### 3.2 Seat statuses
+**Deleted:** `Seat`, `ShowSeat`, `Reservation`, `ReservationSeat`, `BookingSeat`.
+
+### 3.2 Seat availability (computed, not stored)
 
 ```
-AVAILABLE  ──hold──►  HELD  ──confirm──►  BOOKED
-     ▲                  │
-     │                  │ expire / cancel hold
-     └──────────────────┘
-
-BOOKED  ──cancel booking──►  AVAILABLE
+availability =
+  computeSeatsForScreen(screen.layoutConfig, show.basePrice)
+    MINUS BookedSeat WHERE showId = X
+    MINUS active Redis holds for show X
 ```
 
-- **AVAILABLE** — selectable by any user.  
-- **HELD** — tied to an `ACTIVE` reservation until expiry, explicit cancel, or successful booking.  
-- **BOOKED** — permanently taken until a confirmed booking is cancelled.
+Statuses returned to clients: `AVAILABLE` | `HELD` | `BOOKED` (computed at read time).
 
-### 3.3 Optimistic concurrency
+### 3.3 Final correctness
 
-Each `ShowSeat` has a `version` integer. State changes use **conditional updates**:
-
-```typescript
-await tx.showSeat.updateMany({
-  where: { id, status: ShowSeatStatus.AVAILABLE, version },
-  data: { status: ShowSeatStatus.HELD, version: { increment: 1 } },
-});
-// updated.count must be 1, else ConflictException
-```
-
-If two users race for the same seat, exactly one transaction wins; the other gets **409 Conflict**. No distributed lock per seat is required beyond this DB pattern.
+- **Holds:** Redis Lua script — all-or-nothing `ZADD` across a batch; concurrent holds for the same `seatLabel` — exactly one wins.
+- **Bookings:** Prisma transaction creates `Booking` + `BookedSeat` rows. Unique constraint `(showId, seatLabel)` rejects races past Redis; caught as Prisma `P2002` → **409 Conflict**.
 
 ---
 
-## 4. Hold and reservation — deep dive
+## 4. Hold mechanism (Redis only)
 
-### 4.1 Default TTL: 10 minutes (600 seconds)
+### 4.1 Structures
 
-Defined in `ReservationService`:
+1. **Sorted set** `show:{showId}:holds`  
+   - member = `seatLabel` (e.g. `"A5"`)  
+   - score = expiry epoch ms  
 
-```typescript
-const HOLD_TTL_SECONDS = 600;
-```
+2. **Hash + TTL** `hold:token:{token}`  
+   - fields: `showId`, `seatLabels` (JSON), `userId`, `expiresAt`  
+   - used at confirm time to prove ownership  
 
-When a hold is created:
+### 4.2 `HoldService` API
 
-1. `expiresAt = now + holdTtlSeconds` is stored on the `Reservation` row.  
-2. Matching `ShowSeat` rows flip `AVAILABLE → HELD` inside a **single Prisma transaction**.  
-3. Redis keys are set: `hold:showSeat:{showSeatId} → reservationId` with the **same TTL** (`EX 600`).  
+- `tryHoldSeats(showId, seatLabels[], ttlSeconds)` — Lua: abort if any seat’s ZSCORE > now; else ZADD all with expiry. Returns boolean.
+- `releaseSeats` / `getHeldSeats` — ZREM / ZRANGEBYSCORE `now +inf` (expired members invisible; **no cleanup job**).
+- `createHold` / `releaseHold` — validate vs layout + BookedSeat, call Lua, issue token, emit socket events.
+- `createHoldToken` / `resolveHoldToken` / `deleteHoldToken`.
 
-The client may override duration via `holdDurationSeconds` on the API (capped at 600 in the agent tool schema). For demos, `DEMO_FAST_HOLD=true` forces **10-second** holds on the backend; the frontend mirrors this with `NEXT_PUBLIC_DEMO_FAST_HOLD=true` for the checkout countdown.
+### 4.3 Flows
 
-### 4.2 Two layers of truth
+**Hold (`POST /holds`):** validate labels → check not booked → Lua hold → token → `seat-held` events.
 
-| Layer | Purpose | What happens on expiry |
-|-------|---------|-------------------------|
-| **Postgres** | Authoritative seat status and reservation lifecycle | Cron + explicit checks mark reservation `EXPIRED`, seats `AVAILABLE` |
-| **Redis** | Fast hold key mirror + agent session storage | Keys auto-expire via TTL; DB reconcile deletes any stragglers |
+**Confirm (`POST /bookings` with `holdToken`):** resolve token → re-check seats still in sorted set → transaction create Booking + BookedSeat → release Redis → `seat-booked`.
 
-Postgres alone would eventually release seats via cron. Redis TTL gives **fast key eviction** and a cheap way to associate a seat with a reservation id without extra tables.
+**Cancel hold (`DELETE /holds/:token`):** resolve token → ZREM + delete token → `seat-released`.
 
-**Important:** Runtime catalog reads always come from **Postgres via Prisma**, not from seed files. `prisma/seed.ts` only populates demo data (`pnpm prisma:seed`).
+**Cancel booking (`DELETE /bookings/:id`):** status `CANCELLED` → delete `BookedSeat` rows → `seat-released` (seat available again purely by absence from BookedSeat).
 
-### 4.3 Creating a hold (happy path)
-
-**Manual UI path** (`POST /reservations`):
-
-1. Validate all `showSeatIds` exist, belong to `showId`, and are `AVAILABLE`.  
-2. Transaction: create `Reservation` + link seats + flip each seat to `HELD` with version check.  
-3. `redis.setHoldKeys(showSeatIds, reservationId, ttl)`.  
-4. `realtime.emitSeatHeld(showId, seatId, reservationId)` for each seat.  
-
-**Agent path** (`holdSeats` tool → same `ReservationService.create`):
-
-- Requires `session.userId` (via `upsertUser` first).  
-- User selects seats in a `seat_picker` UI; frontend sends a JSON array of `showSeatId` UUIDs.  
-- Enricher runs `tryCompleteHold` and injects a **confirm** prompt (“Confirm booking / Cancel”).
-
-### 4.4 Confirming a booking
-
-`BookingService.createFromReservation`:
-
-1. **Idempotency:** `idempotencyKey` unique index — duplicate POST returns the same booking.  
-2. Reject if reservation not `ACTIVE` or `expiresAt` in the past (triggers expire + **410 Gone**).  
-3. Transaction: create `Booking`, flip seats `HELD → BOOKED`, reservation `ACTIVE → CONFIRMED`.  
-4. Delete Redis hold keys (failure logged, non-fatal).  
-5. Emit `seat-booked` on Socket.IO.
-
-### 4.5 Cancelling
-
-| User intent | Mechanism | Seat outcome |
-|-------------|-----------|--------------|
-| **Cancel hold** (checkout sheet close, timer expiry, agent “cancel” during hold) | `ReservationService.cancel` → `expireReservation` | `HELD → AVAILABLE`, reservation `EXPIRED` |
-| **Cancel confirmed booking** | `BookingService.cancelBooking` | `BOOKED → AVAILABLE`, booking `CANCELLED` |
-| **Agent `releaseHold` tool** | Same as cancel hold | Releases session’s `reservationId` |
-
-Hold cancel and booking cancel are **intentionally separate** — the agent system prompt and enricher enforce this distinction.
+Default TTL: **600s**. Demo: `DEMO_FAST_HOLD=true` / `NEXT_PUBLIC_DEMO_FAST_HOLD=true` → 10s.
 
 ---
 
-## 5. Timer and expiry — how we never leak held seats
+## 5. Why no cron?
 
-Holds are released through **four complementary mechanisms** (defense in depth):
+Previously Redis mirrored Postgres `Reservation.expiresAt` and a cron drained expired rows. That duplicated truth and required a background worker.
 
-### 5.1 Client-side countdown (manual checkout)
+Now:
 
-`CheckoutSheet` reads `expiresAt` from the reservation response and runs a 1-second interval. At `secondsLeft <= 0`, it calls `cancelReservationSafe` and notifies the seat map. This gives immediate UX when the user is staring at the payment sheet.
+- Holds **never write to Postgres**.  
+- Expiry is the sorted-set score. Reads use `ZRANGEBYSCORE (now +inf`.  
+- Booking time re-checks the hold; expired tokens return **410 Gone**.  
+- Client countdown still releases holds early on close/expiry for UX.
 
-### 5.2 Server-side check at booking time
+---
 
-Before confirming, `BookingService` calls `isReservationExpired`. If expired, it runs `expireReservation` and returns **410 Gone** — the user cannot book stale holds.
+## 6. WebSocket
 
-### 5.3 Cron reconciliation (backstop)
+Event names unchanged: `seat-held`, `seat-released`, `seat-booked`.  
+Payload field renamed: `seatId` → `seatLabel`.  
+Frontend `useShowSocket` refetches `['show-seats', showId]` on every event.
 
-`ReservationReconcileCron` runs on a configurable schedule (default: **every minute** via `RECONCILE_CRON_INTERVAL`):
+---
 
-1. Query up to **100** reservations (`RECONCILE_BATCH_SIZE`) where `status = ACTIVE` and `expiresAt < now`.
-2. For each candidate in the batch, call `ReservationReconcileService.expireReservation` concurrently.
-3. Per-reservation failures are logged; the batch continues.
-4. If the batch came back full (i.e. there may be more expired reservations left), repeat from step 1 within the same tick, so a large backlog drains in one run instead of trickling out one batch per minute.
+## 7. Agent
 
-This handles:
+Same tool set (`holdSeats`, `confirmBooking`, `releaseHold`, `getSeatMap`, …).  
+Internal plumbing uses `HoldService` / `BookingService.createFromHold`.  
+`session.reservationId` is **repurposed as the hold token** (same session field, new semantics).  
+Seat picker values are **seatLabels** (e.g. `"A5"`), not UUIDs.  
+Enricher + system prompt updated accordingly; structure of UI rules unchanged.
 
-- User closed the tab without cancelling  
-- Server crashed after hold but before Redis TTL alignment  
-- Redis and DB drift  
-- Any exceptional path that skipped client cleanup  
+---
 
-For faster demos, `.env.example` documents a 10-second cron: `RECONCILE_CRON_INTERVAL=*/10 * * * * *`.
+## 8. Scalability notes
 
-### 5.4 What `expireReservation` does atomically
-
-1. No-op if reservation is not `ACTIVE`.  
-2. Transaction: reservation `→ EXPIRED`; each `HELD` seat `→ AVAILABLE` with version guard.  
-3. `redis.deleteHoldKeys` for all held seat ids.  
-4. `realtime.emitSeatReleased` per seat so all connected clients refetch.
-
-If two workers try to expire the same reservation, `updateMany` count checks ensure **exactly-once** semantic effect.
-
-### 5.5 When something goes wrong
-
-| Failure | Behavior |
+| Concern | Approach |
 |---------|----------|
-| Hold race (seat taken) | `409 Conflict`; agent enricher refreshes seat picker |
-| Redis down during hold | Hold still committed in Postgres; cron + booking checks remain correct |
-| Redis delete fails after booking | Logged warning; seat already `BOOKED` in DB — safe |
-| Double booking POST | Idempotency key returns existing booking |
-| Agent double-submit | Redis turn lock → **429** “Previous message still processing” |
-| LLM skips UI picker | Enricher injects synthetic `uiPrompt` tool calls |
+| Millions of show × seat combinations | No pre-filled rows; only BookedSeat grows with confirmed sales |
+| Concurrent holds | Redis Lua atomicity per show sorted set |
+| Concurrent confirm | Unique `(showId, seatLabel)` in Postgres |
+| Orphaned Redis members | Harmless; invisible after score passes; optional opportunistic ZREMRANGEBYSCORE later |
+| Multi-instance Socket.IO | Add Redis adapter when scaling Nest horizontally |
+
+**Intentionally skipped:** Kafka, reservation microservice, CQRS seat read model, reconciliation cron.
 
 ---
 
-## 6. WebSocket real-time updates
-
-### 6.1 Backend
-
-- **Gateway:** `RealtimeGateway` — clients `join-show` / `leave-show` rooms named `show:{showId}`.  
-- **Service:** `RealtimeService` emits:
-  - `seat-held` — `{ showId, seatId, reservationId }`
-  - `seat-released` — `{ showId, seatId }`
-  - `seat-booked` — `{ showId, seatId, bookingId }`
-
-Emitted after successful DB writes in reservation, reconcile, and booking services.
-
-### 6.2 Frontend
-
-`useShowSocket(showId)`:
-
-1. Joins the show room on mount.  
-2. Listens for all three events.  
-3. Invalidates React Query key `['show-seats', showId]` → seat map refetches.  
-
-No custom diff protocol — **simple event → refetch** keeps clients consistent with Postgres without maintaining a replicated seat state machine in the browser.
-
-### 6.3 Scalability note for WebSockets
-
-This pattern scales to **one Node process** with Socket.IO’s room model. Horizontal scaling would require a Redis adapter for Socket.IO (sticky sessions or shared pub/sub). We have not added that yet because it is unnecessary below roughly **tens of thousands of concurrent connections per region** for a demo/MVP, and the reviewer’s focus is hold correctness—not multi-region fanout.
-
----
-
-## 7. Conversational booking agent
-
-### 7.1 Request flow
-
-```
-User message (frontend)
-    │
-    ▼
-POST /agent/chat
-    │
-    ├─ acquireTurnLock(sessionId)     ──► 429 if busy
-    │
-    ├─ load/save AgentSession (Redis hash, TTL 30 min)
-    │
-    ├─ runAgentLoop (Gemini 2.5 Flash, max 2 tool steps)
-    │     └─ tools: listMovies, listShows, getSeatMap, holdSeats,
-    │              confirmBooking, cancelBooking, releaseHold, uiPrompt, …
-    │
-    ├─ enrichToolCalls (deterministic post-processor)
-    │     └─ injects uiPrompt / uiMarkdown when LLM omits them
-    │
-    ├─ filterClientToolCalls (hide raw listMovies/listShows/getSeatMap)
-    │
-    └─ releaseTurnLock
-```
-
-### 7.2 Why two phases: LLM loop + enricher?
-
-LLMs are non-deterministic. The enricher (`enrichToolCalls.ts`) is **server-side control logic** that:
-
-- Guarantees a **movie dropdown** after `listMovies` (Rule 1)  
-- Shows **date chips** after movie UUID selection (Rule 2, 2b)  
-- Shows **showtime dropdown** after date (Rules 3–4)  
-- Shows **seat picker** after `getSeatMap` (Rule 5)  
-- Completes **hold + confirm** after seat JSON (Rule 6, 6b)  
-- Renders **ticket markdown + redirect** after confirm (Rule 7)  
-- Handles **hold cancel** vs **booking cancel** (Rules 8–12)  
-
-If the model returns an empty turn on “what movies are playing?”, a **safety net** still fetches movies and renders the picker.
-
-### 7.3 Session state (Redis)
-
-`AgentSession` tracks: `userId`, `movieId`, `selectedDate`, `showId`, `reservationId`, `pendingCancelBookingId`, `awaitingCancelBookingPick`, and message history.
-
-- Stored as Redis hash `agent:session:{sessionId}`, TTL **30 minutes**.  
-- Turn lock: `agent:lock:{sessionId}` with **30-second** NX lock prevents concurrent messages corrupting session state.
-
-### 7.4 Frontend chat
-
-- **Hook:** `useBookingAgent` — sends messages, parses `toolCalls` into `UiBlock[]` (`choice_group`, `seat_picker`, `confirm`, `markdown`).  
-- **Panel:** `BookingAgentChatPanel` — renders blocks; **locks free-text input** while an interactive block awaits an answer.  
-- **Seat selection:** `BookingAgentSeatPicker` supports multi-seat (`maxSelections: 0` = unlimited).  
-- **Redirect:** Assistant text may include `REDIRECT:/booking/{id}`; controller extracts it and the hook `router.push`es.
-
-The agent and the manual seat map **share the same reservation and booking APIs** — there is no separate “chat database.”
-
----
-
-## 8. Control, safety, and testability
-
-| Concern | Implementation |
-|---------|----------------|
-| **Concurrent holds on same seat** | Optimistic `version` on `ShowSeat` |
-| **Double payment click** | `idempotencyKey` on booking + frontend `payInFlightRef` guard |
-| **Double hold click** | `holdInFlightRef` in `CheckoutSheet` |
-| **Stale reservation at pay** | Server 410 + client countdown |
-| **Orphaned holds** | Minute cron + Redis TTL |
-| **Agent race** | Redis turn lock, HTTP 429 |
-| **Invalid LLM tool args** | Filtered from response; enricher fills gaps |
-| **Integration test** | `booking-idempotency.integration.spec.ts` (requires `DATABASE_URL`) |
-
----
-
-## 9. Scalability: what this architecture supports (and where it stops)
-
-### 9.1 Comfortable range (no architectural change)
-
-- **Single region**, single NestJS instance  
-- **Thousands of concurrent users** browsing; **hundreds** contending on the same show’s seat map  
-- **~10⁵–10⁶** show-seat rows in Postgres with indexed `showId` + `status`  
-- **Redis** for ephemeral keys and sessions (memory-bound, not durability-bound)  
-
-Postgres row-level locking via `updateMany` + `version` is the industry-standard pattern for seat inventory at this scale (same idea as airline/theatre systems without a message bus).
-
-### 9.2 What we intentionally did not build
-
-| Pattern | Why we skipped it (for now) |
-|---------|----------------------------|
-| **Kafka / event streaming** | Hold lifecycle is synchronous and transaction-bound; events would duplicate DB truth without simplifying correctness |
-| **Separate reservation microservice** | Would require distributed transactions or sagas for hold→book |
-| **CQRS seat read model** | Socket refetch from Postgres is simpler and always consistent |
-| **Multi-region active-active** | Needs CRDT or leader-per-show; out of scope |
-
-### 9.3 Natural upgrade path (without overengineering today)
-
-1. **Socket.IO Redis adapter** — when running multiple API replicas.  
-2. **Read replicas** — catalog queries (`listMovies`, seat maps) off replica; writes stay on primary.  
-3. **Partition cron** — shard `expireReservation` by `expiresAt` ranges if ACTIVE reservation count explodes.  
-4. **Connection pooling** — PgBouncer in front of Supabase/Postgres.  
-
-Each step addresses a **measured** bottleneck; none require Kafka for correct holds.
-
----
-
-## 10. Operational quick reference
-
-| Task | Command / config |
-|------|------------------|
-| Seed demo catalog | `cd backend && pnpm prisma:seed` |
-| Default hold TTL | 600 s (10 min) |
-| Demo fast hold | `DEMO_FAST_HOLD=true`, `NEXT_PUBLIC_DEMO_FAST_HOLD=true` |
-| Expiry cron | `RECONCILE_CRON_INTERVAL` (default every minute) |
-| Flush stale Redis holds | Restart Redis or `DEL hold:showSeat:*` after re-seed |
-| Health check | `GET /health` |
-
----
-
-## 11. Key files for review
+## 9. Key files
 
 | Topic | Path |
 |-------|------|
-| Hold creation | `backend/src/reservation/service/reservation.service.ts` |
-| Expiry / cleanup | `backend/src/reservation/service/reservation-reconcile.service.ts` |
-| Cron backstop | `backend/src/reservation/service/reservation-reconcile.cron.ts` |
-| Booking confirm + cancel | `backend/src/booking/service/booking.service.ts` |
-| Redis hold keys | `backend/src/redis/redis.service.ts`, `backend/src/common/redis-hold.keys.ts` |
-| WebSocket | `backend/src/realtime/realtime.gateway.ts`, `realtime.service.ts` |
-| Agent controller | `backend/src/agent/controller/agent.controller.ts` |
-| LLM loop | `backend/src/agent/scout/agentLoop.ts` |
-| Enricher rules | `backend/src/agent/scout/enrichToolCalls.ts` |
-| Agent session + lock | `backend/src/agent/session/session.service.ts` |
-| Checkout timer + cancel | `frontend/src/app/show/[id]/seats/_components/CheckoutSheet.tsx` |
-| Live seat map socket | `frontend/src/hooks/useShowSocket.ts` |
-| Chat hook + UI | `frontend/src/hooks/useBookingAgent.ts`, `frontend/src/components/booking-agent/` |
 | Schema | `backend/prisma/schema.prisma` |
+| Seat computation | `backend/src/catalog/util/computeSeatsForScreen.ts` |
+| Holds (Lua) | `backend/src/hold/service/hold.service.ts` |
+| Booking from hold | `backend/src/booking/service/booking.service.ts` |
+| Seat map composition | `backend/src/catalog/service/catalog.service.ts` |
+| Agent tools | `backend/src/agent/tools/holdSeats.ts`, `confirmBooking.ts` |
+| Concurrent hold test | `backend/src/hold/service/hold.concurrent.spec.ts` |
+| Idempotency test | `backend/src/booking/booking-idempotency.integration.spec.ts` |
 
 ---
 
-## 12. End-to-end diagram
+## 10. End-to-end diagram
 
 ```mermaid
 sequenceDiagram
-  participant U as User / Browser
-  participant API as NestJS API
-  participant PG as Postgres
+  participant U as User
+  participant API as NestJS
   participant RD as Redis
+  participant PG as Postgres
   participant WS as Socket.IO
 
-  U->>API: POST /reservations (hold seats)
-  API->>PG: TX: seats AVAILABLE→HELD, create Reservation
-  API->>RD: SET hold:showSeat:* EX 600
-  API->>WS: emit seat-held
-  WS->>U: seat-held → refetch seat map
+  U->>API: POST /holds seatLabels
+  API->>RD: Lua ZADD show:holds + hold:token
+  API->>WS: seat-held
 
-  Note over U,API: User has up to 10 minutes
-
-  alt User confirms payment
-    U->>API: POST /bookings (idempotencyKey)
-    API->>PG: TX: seats HELD→BOOKED, reservation CONFIRMED
-    API->>RD: DEL hold keys
-    API->>WS: emit seat-booked
-  else Timer / tab close / cron
-    API->>PG: TX: seats HELD→AVAILABLE, reservation EXPIRED
-    API->>RD: DEL hold keys
-    API->>WS: emit seat-released
+  alt Confirm
+    U->>API: POST /bookings holdToken
+    API->>RD: resolve token, re-check ZSCORE
+    API->>PG: TX Booking + BookedSeat unique
+    API->>RD: ZREM + DEL token
+    API->>WS: seat-booked
+  else Cancel / expiry
+    U->>API: DELETE /holds/:token
+    API->>RD: ZREM + DEL token
+    API->>WS: seat-released
   end
 ```
 
 ---
 
-## 13. Summary for the reviewer
+## 11. Summary for the reviewer
 
-- **Holds are 10 minutes by default**, mirrored in Redis TTL and enforced in Postgres via `expiresAt`.  
-- **Seats are never “soft held”** — `HELD` is a real DB state with optimistic locking.  
-- **Failure paths are covered:** client timer, booking-time expiry check, and **minute cron** as the safety net.  
-- **Cancellation is explicit** for both holds and confirmed bookings, with real-time seat release.  
-- **The chat agent is controlled:** tools call the same services as the UI; an enricher guarantees structured prompts; session locks prevent races.  
-- **The monorepo avoids distributed complexity** while remaining honest about scaling limits and a clear upgrade path when metrics demand it.
+- **No Seat / ShowSeat / Reservation tables** — seats from `layoutConfig`, holds in Redis only.  
+- **No cron** — sorted-set scores + lazy reads.  
+- **Postgres unique constraint** is the hard guarantee on confirm.  
+- **Lua script** is the hard guarantee on hold races.  
+- Agent and manual UI share the same Hold/Booking services.

@@ -6,17 +6,17 @@ export const REALTIME_EVENTS = {
 
 export interface SeatHeldPayload {
   showId: string;
-  seatId: string;
-  reservationId: string;
+  seatLabel: string;
+  holdToken: string;
 }
 
 export interface SeatReleasedPayload {
   showId: string;
-  seatId: string;
+  seatLabel: string;
 }
 
 export interface SeatBookedPayload {
   showId: string;
-  seatId: string;
+  seatLabel: string;
   bookingId: string;
 }

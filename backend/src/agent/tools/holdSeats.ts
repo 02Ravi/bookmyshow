@@ -6,12 +6,14 @@ import {
   HOLD_TTL_MIN_SECONDS,
 } from '../../common/constants';
 import type { BookingToolsContext } from './context';
-import { assertUuid } from './utils';
+
+/** Human seat labels like "A5", "H10". */
+const SEAT_LABEL_PATTERN = /^[A-Za-z]+\d+$/;
 
 export function createHoldSeatsTool(ctx: BookingToolsContext) {
   const inputSchema = z.object({
     showId: z.string().uuid(),
-    showSeatIds: z.array(z.string()).min(1),
+    seatLabels: z.array(z.string()).min(1),
     holdDurationSeconds: z
       .number()
       .int()
@@ -22,11 +24,11 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
 
   return {
     description:
-      'Hold seats for the current session user. Always call getSeatMap first to resolve showSeatIds.',
+      'Hold seats for the current session user. Always call getSeatMap first to resolve seatLabels (e.g. "A5").',
     inputSchema,
     execute: async ({
       showId,
-      showSeatIds,
+      seatLabels,
       holdDurationSeconds,
     }: z.infer<typeof inputSchema>) => {
       if (!ctx.session.userId) {
@@ -35,13 +37,12 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
         );
       }
 
-      try {
-        showSeatIds.forEach((id) => assertUuid(id, 'showSeatIds'));
-      } catch {
+      const invalid = seatLabels.filter((l) => !SEAT_LABEL_PATTERN.test(l));
+      if (invalid.length > 0) {
         return {
           error: true,
           message:
-            'holdSeats requires UUID showSeatIds from a prior getSeatMap call. Human seat labels like "B5" are not valid. Call getSeatMap first, then present a seat_picker uiPrompt to the user.',
+            'holdSeats requires seatLabels from a prior getSeatMap call (e.g. "B5"). Call getSeatMap first, then present a seat_picker uiPrompt to the user.',
         };
       }
 
@@ -51,26 +52,26 @@ export function createHoldSeatsTool(ctx: BookingToolsContext) {
           : holdDurationSeconds;
 
       try {
-        const reservation = await ctx.reservation.create({
+        const hold = await ctx.hold.createHold({
           userId: ctx.session.userId,
           showId,
-          showSeatIds,
+          seatLabels,
           holdDurationSeconds: effectiveHoldDuration,
         });
 
-        ctx.session.reservationId = reservation.id;
+        ctx.session.reservationId = hold.token;
         ctx.session.showId = showId;
 
         return {
-          reservationId: reservation.id,
-          expiresAt: reservation.expiresAt,
-          seatsHeld: reservation.showSeatIds.length,
+          reservationId: hold.token,
+          expiresAt: hold.expiresAt,
+          seatsHeld: hold.seatLabels.length,
         };
       } catch (error) {
         if (error instanceof ConflictException) {
           const seatMap = await ctx.catalog.findShowSeats(showId);
           const currentSeatStates = seatMap.filter((seat) =>
-            showSeatIds.includes(seat.showSeatId),
+            seatLabels.includes(seat.seatLabel),
           );
 
           return {

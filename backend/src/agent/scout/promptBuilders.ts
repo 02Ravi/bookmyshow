@@ -1,5 +1,5 @@
-import { ShowSeatStatus } from '../../generated/prisma/client';
 import { UUID_PATTERN } from '../../common/uuid';
+import type { SeatStatus } from '../../catalog/dto/show-seat-response.dto';
 
 export interface UiPromptToolCall {
   toolName: 'uiPrompt';
@@ -21,11 +21,11 @@ export interface ShowChoiceSource {
 }
 
 export interface SeatChoiceSource {
-  showSeatId: string;
+  seatLabel: string;
   row: string;
   number: number;
   type: string;
-  status: ShowSeatStatus;
+  status: SeatStatus;
   price: number | string;
 }
 
@@ -142,7 +142,7 @@ export function buildSeatPickerInput(
       type: 'seat_picker',
       message,
       seats: seats.map((seat) => ({
-        showSeatId: seat.showSeatId,
+        seatLabel: seat.seatLabel,
         row: seat.row,
         number: seat.number,
         type: seat.type,
@@ -157,6 +157,8 @@ export function buildSeatPickerInput(
 export const DATE_MESSAGE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 export { UUID_PATTERN };
 
+const SEAT_LABEL_PATTERN = /^[A-Za-z]+\d+$/;
+
 export function isSeatIdsMessage(message: string): boolean {
   const trimmed = message.trim();
   if (!trimmed.startsWith('[')) return false;
@@ -166,7 +168,7 @@ export function isSeatIdsMessage(message: string): boolean {
     if (!Array.isArray(parsed) || parsed.length === 0) return false;
 
     return parsed.every(
-      (id) => typeof id === 'string' && UUID_PATTERN.test(id),
+      (id) => typeof id === 'string' && SEAT_LABEL_PATTERN.test(id),
     );
   } catch {
     return false;

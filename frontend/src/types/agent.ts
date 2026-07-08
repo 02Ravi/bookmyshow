@@ -27,7 +27,7 @@ export type UiBlock =
       type: 'seat_picker';
       message: string;
       seats: Array<{
-        showSeatId: string;
+        seatLabel: string;
         row: string;
         number: number;
         type: string;

@@ -1,6 +1,6 @@
 import 'dotenv/config';
 import { PrismaPg } from '@prisma/adapter-pg';
-import { PrismaClient, SeatType, ShowSeatStatus } from '../src/generated/prisma/client';
+import { PrismaClient } from '../src/generated/prisma/client';
 
 const connectionString = process.env.DATABASE_URL;
 if (!connectionString) {
@@ -15,9 +15,21 @@ const prisma = new PrismaClient({
 const DAYS_AHEAD = 14;
 /** Show start hours per day (UTC). */
 const SHOW_HOURS = [10, 14, 18, 21];
+/** Base ticket price in INR — multipliers in layoutConfig derive tier prices. */
+const BASE_PRICE = '200.00';
 
-const ROWS = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
-const SEATS_PER_ROW = 10;
+const LAYOUT_CONFIG = {
+  rows: [
+    { row: 'A', seats: 10, type: 'REGULAR', priceMultiplier: 1 },
+    { row: 'B', seats: 10, type: 'REGULAR', priceMultiplier: 1 },
+    { row: 'C', seats: 10, type: 'REGULAR', priceMultiplier: 1 },
+    { row: 'D', seats: 10, type: 'REGULAR', priceMultiplier: 1 },
+    { row: 'E', seats: 10, type: 'REGULAR', priceMultiplier: 1 },
+    { row: 'F', seats: 10, type: 'PREMIUM', priceMultiplier: 1.75 },
+    { row: 'G', seats: 10, type: 'PREMIUM', priceMultiplier: 1.75 },
+    { row: 'H', seats: 10, type: 'RECLINER', priceMultiplier: 2.25 },
+  ],
+};
 
 const MOVIES = [
   {
@@ -73,26 +85,10 @@ function setShowTime(base: Date, hour: number, minute: number): Date {
   return result;
 }
 
-function seatPrice(type: SeatType): string {
-  if (type === SeatType.PREMIUM) return '350.00';
-  if (type === SeatType.RECLINER) return '450.00';
-  return '200.00';
-}
-
-function seatTypeForRow(row: string): SeatType {
-  if (row === 'H') return SeatType.RECLINER;
-  if (row === 'G' || row === 'F') return SeatType.PREMIUM;
-  return SeatType.REGULAR;
-}
-
 async function main() {
-  await prisma.bookingSeat.deleteMany();
+  await prisma.bookedSeat.deleteMany();
   await prisma.booking.deleteMany();
-  await prisma.reservationSeat.deleteMany();
-  await prisma.reservation.deleteMany();
-  await prisma.showSeat.deleteMany();
   await prisma.show.deleteMany();
-  await prisma.seat.deleteMany();
   await prisma.screen.deleteMany();
   await prisma.theatre.deleteMany();
   await prisma.movie.deleteMany();
@@ -112,44 +108,19 @@ async function main() {
         data: {
           theatreId: theatre.id,
           name: 'Screen 1',
+          layoutConfig: LAYOUT_CONFIG,
         },
       }),
     ),
   );
 
-  const seatsByScreen = new Map<string, { id: string; type: SeatType }[]>();
-
-  for (const screen of screens) {
-    const seats: { id: string; type: SeatType }[] = [];
-
-    for (const row of ROWS) {
-      const type = seatTypeForRow(row);
-      for (let number = 1; number <= SEATS_PER_ROW; number++) {
-        const seat = await prisma.seat.create({
-          data: {
-            screenId: screen.id,
-            row,
-            number,
-            type,
-          },
-        });
-        seats.push({ id: seat.id, type: seat.type });
-      }
-    }
-
-    seatsByScreen.set(screen.id, seats);
-  }
-
   const today = new Date();
   today.setUTCHours(0, 0, 0, 0);
 
   let showCount = 0;
-  let showSeatCount = 0;
 
   for (const movie of movies) {
     for (const screen of screens) {
-      const seats = seatsByScreen.get(screen.id)!;
-
       for (let dayOffset = 0; dayOffset < DAYS_AHEAD; dayOffset++) {
         for (const hour of SHOW_HOURS) {
           const day = addDays(today, dayOffset);
@@ -158,26 +129,17 @@ async function main() {
             startTime.getTime() + movie.durationMinutes * 60 * 1000,
           );
 
-          const show = await prisma.show.create({
+          await prisma.show.create({
             data: {
               movieId: movie.id,
               screenId: screen.id,
               startTime,
               endTime,
+              basePrice: BASE_PRICE,
             },
           });
 
-          await prisma.showSeat.createMany({
-            data: seats.map((seat) => ({
-              showId: show.id,
-              seatId: seat.id,
-              status: ShowSeatStatus.AVAILABLE,
-              price: seatPrice(seat.type),
-            })),
-          });
-
           showCount += 1;
-          showSeatCount += seats.length;
         }
       }
     }
@@ -190,7 +152,10 @@ async function main() {
     },
   });
 
-  const seatsPerScreen = ROWS.length * SEATS_PER_ROW;
+  const seatsPerScreen = LAYOUT_CONFIG.rows.reduce(
+    (sum, row) => sum + row.seats,
+    0,
+  );
 
   console.log('Seed complete:', {
     movies: movies.length,
@@ -200,8 +165,7 @@ async function main() {
     slotsPerDay: SHOW_HOURS.length,
     seatsPerScreen,
     shows: showCount,
-    showSeats: showSeatCount,
-    allSeatsStatus: 'AVAILABLE',
+    layoutConfig: 'stored on Screen (no Seat/ShowSeat rows)',
     demoUserId: demoUser.id,
   });
 }

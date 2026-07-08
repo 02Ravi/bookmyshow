@@ -1,29 +1,10 @@
-import { SeatType, ShowSeatStatus } from '../../generated/prisma/client';
+export type SeatStatus = 'AVAILABLE' | 'HELD' | 'BOOKED';
 
 export interface ShowSeatResponseDto {
-  showSeatId: string;
-  seatId: string;
+  seatLabel: string;
   row: string;
   number: number;
-  type: SeatType;
-  status: ShowSeatStatus;
+  type: string;
+  status: SeatStatus;
   price: string;
-}
-
-export function toShowSeatResponse(showSeat: {
-  id: string;
-  seatId: string;
-  status: ShowSeatStatus;
-  price: { toString(): string };
-  seat: { row: string; number: number; type: SeatType };
-}): ShowSeatResponseDto {
-  return {
-    showSeatId: showSeat.id,
-    seatId: showSeat.seatId,
-    row: showSeat.seat.row,
-    number: showSeat.seat.number,
-    type: showSeat.seat.type,
-    status: showSeat.status,
-    price: showSeat.price.toString(),
-  };
 }

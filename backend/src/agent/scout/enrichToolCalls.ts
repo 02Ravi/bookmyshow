@@ -1,5 +1,5 @@
 import { ConflictException } from '@nestjs/common';
-import { BookingStatus, ShowSeatStatus } from '../../generated/prisma/client';
+import { BookingStatus } from '../../generated/prisma/client';
 import {
   DEMO_FAST_HOLD_SECONDS,
   MAX_TICKETS_SHOWN,
@@ -7,7 +7,7 @@ import {
 import { AuthService } from '../../auth/service/auth.service';
 import { BookingService } from '../../booking/service/booking.service';
 import { CatalogService } from '../../catalog/service/catalog.service';
-import { ReservationService } from '../../reservation/service/reservation.service';
+import { HoldService } from '../../hold/service/hold.service';
 import { AgentSession } from '../session/session.service';
 import {
   DATE_MESSAGE_PATTERN,
@@ -65,7 +65,7 @@ interface EnrichParams {
   session: AgentSession;
   lastUserMessage: string;
   catalog: CatalogService;
-  reservation: ReservationService;
+  hold: HoldService;
   booking: BookingService;
   auth: AuthService;
   sessionId: string;
@@ -552,20 +552,20 @@ function parseSeatList(result: unknown): SeatChoiceSource[] {
   return result.flatMap((seat) => {
     if (!isRecord(seat)) return [];
     if (
-      typeof seat.showSeatId !== 'string' ||
+      typeof seat.seatLabel !== 'string' ||
       typeof seat.row !== 'string' ||
       typeof seat.number !== 'number' ||
       typeof seat.type !== 'string' ||
-      (seat.status !== ShowSeatStatus.AVAILABLE &&
-        seat.status !== ShowSeatStatus.HELD &&
-        seat.status !== ShowSeatStatus.BOOKED)
+      (seat.status !== 'AVAILABLE' &&
+        seat.status !== 'HELD' &&
+        seat.status !== 'BOOKED')
     ) {
       return [];
     }
 
     return [
       {
-        showSeatId: seat.showSeatId,
+        seatLabel: seat.seatLabel,
         row: seat.row,
         number: seat.number,
         type: seat.type,
@@ -626,7 +626,7 @@ function parseShowSeatIdsFromMessage(message: string): string[] {
   }
 }
 
-function parseHoldShowSeatIds(
+function parseHoldSeatLabels(
   lastUserMessage: string,
   holdSeatsExecution: { input: unknown } | null,
   toolCalls: unknown[],
@@ -636,11 +636,11 @@ function parseHoldShowSeatIds(
 
   const holdInput =
     holdSeatsExecution?.input ?? findToolCallInput(toolCalls, 'holdSeats');
-  if (!isRecord(holdInput) || !Array.isArray(holdInput.showSeatIds)) {
+  if (!isRecord(holdInput) || !Array.isArray(holdInput.seatLabels)) {
     return [];
   }
 
-  return holdInput.showSeatIds.filter(
+  return holdInput.seatLabels.filter(
     (id): id is string => typeof id === 'string',
   );
 }
@@ -650,16 +650,16 @@ async function tryCompleteHold(params: {
   lastUserMessage: string;
   holdSeatsExecution: { input: unknown; result: unknown } | null;
   toolCalls: unknown[];
-  reservation: ReservationService;
-  showSeatIdsOverride?: string[];
+  hold: HoldService;
+  seatLabelsOverride?: string[];
 }): Promise<{ seatsHeld: number; expiresAt?: Date } | null> {
   const {
     session,
     lastUserMessage,
     holdSeatsExecution,
     toolCalls,
-    reservation,
-    showSeatIdsOverride,
+    hold,
+    seatLabelsOverride,
   } = params;
 
   if (session.reservationId) {
@@ -673,15 +673,15 @@ async function tryCompleteHold(params: {
       return { seatsHeld: holdResult.seatsHeld, expiresAt };
     }
 
-    const showSeatIds =
-      showSeatIdsOverride ??
-      parseHoldShowSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
-    return { seatsHeld: showSeatIds.length > 0 ? showSeatIds.length : 1 };
+    const seatLabels =
+      seatLabelsOverride ??
+      parseHoldSeatLabels(lastUserMessage, holdSeatsExecution, toolCalls);
+    return { seatsHeld: seatLabels.length > 0 ? seatLabels.length : 1 };
   }
 
-  const showSeatIds =
-    showSeatIdsOverride ??
-    parseHoldShowSeatIds(lastUserMessage, holdSeatsExecution, toolCalls);
+  const seatLabels =
+    seatLabelsOverride ??
+    parseHoldSeatLabels(lastUserMessage, holdSeatsExecution, toolCalls);
   const holdInput =
     holdSeatsExecution?.input ?? findToolCallInput(toolCalls, 'holdSeats');
   const showId =
@@ -690,7 +690,7 @@ async function tryCompleteHold(params: {
       ? holdInput.showId
       : null);
 
-  if (!session.userId || !showId || showSeatIds.length === 0) {
+  if (!session.userId || !showId || seatLabels.length === 0) {
     return null;
   }
 
@@ -699,19 +699,19 @@ async function tryCompleteHold(params: {
       process.env.DEMO_FAST_HOLD === 'true'
         ? DEMO_FAST_HOLD_SECONDS
         : undefined;
-    const created = await reservation.create({
+    const created = await hold.createHold({
       userId: session.userId,
       showId,
-      showSeatIds,
+      seatLabels,
       holdDurationSeconds,
     });
 
-    session.reservationId = created.id;
+    session.reservationId = created.token;
     session.showId = showId;
     session.pendingShowSeatIds = null;
 
     return {
-      seatsHeld: created.showSeatIds.length,
+      seatsHeld: created.seatLabels.length,
       expiresAt: created.expiresAt,
     };
   } catch (error) {
@@ -730,8 +730,8 @@ async function tryCompleteBooking(params: {
   const { session, sessionId, booking } = params;
   if (!session.reservationId) return null;
 
-  const result = await booking.createFromReservation({
-    reservationId: session.reservationId,
+  const result = await booking.createFromHold({
+    holdToken: session.reservationId,
     idempotencyKey: `agent-${sessionId}-${Date.now()}`,
   });
 
@@ -772,7 +772,7 @@ async function fetchShowsWithAvailability(
         theatreName: show.theatreName,
         screenName: show.screenName,
         availableSeats: seats.filter(
-          (seat) => seat.status === ShowSeatStatus.AVAILABLE,
+          (seat) => seat.status === 'AVAILABLE',
         ).length,
       };
     }),
@@ -831,7 +831,7 @@ interface RuleContext {
   session: AgentSession;
   lastUserMessage: string;
   catalog: CatalogService;
-  reservation: ReservationService;
+  hold: HoldService;
   booking: BookingService;
   sessionId: string;
   toolCalls: unknown[];
@@ -864,7 +864,7 @@ function buildRuleContext(params: EnrichParams): RuleContext {
     session,
     lastUserMessage,
     catalog,
-    reservation,
+    hold,
     booking,
     sessionId,
   } = params;
@@ -909,7 +909,7 @@ function buildRuleContext(params: EnrichParams): RuleContext {
     session,
     lastUserMessage,
     catalog,
-    reservation,
+    hold,
     booking,
     sessionId,
     toolCalls,
@@ -1278,7 +1278,7 @@ async function handleShowtimeDropdownRule(
 async function handleProfileSubmittedHoldRule(
   ctx: RuleContext,
 ): Promise<EnrichResult | null> {
-  const { session, lastUserMessage, toolCalls, reservation, catalog } = ctx;
+  const { session, lastUserMessage, toolCalls, hold, catalog } = ctx;
 
   if (
     isProfileMessage(lastUserMessage) &&
@@ -1295,8 +1295,8 @@ async function handleProfileSubmittedHoldRule(
         lastUserMessage,
         holdSeatsExecution: null,
         toolCalls,
-        reservation,
-        showSeatIdsOverride: pendingShowSeatIds,
+        hold,
+        seatLabelsOverride: pendingShowSeatIds,
       });
 
       if (holdDetails) {
@@ -1347,13 +1347,13 @@ function handleSeatSelectionProfileRule(ctx: RuleContext): EnrichResult | null {
     !hasUiPromptOfType('profile_form', toolCalls, executions) &&
     !isProfileMessage(lastUserMessage)
   ) {
-    const showSeatIds = parseHoldShowSeatIds(
+    const seatLabels = parseHoldSeatLabels(
       lastUserMessage,
       holdSeatsExecution,
       toolCalls,
     );
-    if (showSeatIds.length > 0) {
-      session.pendingShowSeatIds = JSON.stringify(showSeatIds);
+    if (seatLabels.length > 0) {
+      session.pendingShowSeatIds = JSON.stringify(seatLabels);
     }
 
     const prompt = buildProfileFormInput(
@@ -1381,7 +1381,7 @@ async function handleHoldCompletionRule(
     session,
     lastUserMessage,
     holdSeatsExecution,
-    reservation,
+    hold,
   } = ctx;
 
   if (
@@ -1395,7 +1395,7 @@ async function handleHoldCompletionRule(
       lastUserMessage,
       holdSeatsExecution,
       toolCalls,
-      reservation,
+      hold,
     });
 
     if (holdDetails) {
@@ -1501,11 +1501,11 @@ function handleCancelAbortRule(ctx: RuleContext): EnrichResult | null {
 async function handleCancelActiveReservationRule(
   ctx: RuleContext,
 ): Promise<EnrichResult | null> {
-  const { isCancelMessage, session, reservation, catalog } = ctx;
+  const { isCancelMessage, session, hold, catalog } = ctx;
 
   if (isCancelMessage && session.reservationId && session.showId) {
     if (session.reservationId) {
-      await reservation.cancel(session.reservationId);
+      await hold.releaseHold(session.reservationId);
       session.reservationId = null;
     }
 

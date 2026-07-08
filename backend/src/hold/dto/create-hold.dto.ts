@@ -3,6 +3,7 @@ import {
   IsArray,
   IsInt,
   IsOptional,
+  IsString,
   IsUUID,
   Max,
   Min,
@@ -12,7 +13,7 @@ import {
   HOLD_TTL_MIN_SECONDS,
 } from '../../common/constants';
 
-export class CreateReservationDto {
+export class CreateHoldDto {
   @IsUUID()
   userId!: string;
 
@@ -21,8 +22,8 @@ export class CreateReservationDto {
 
   @IsArray()
   @ArrayNotEmpty()
-  @IsUUID('4', { each: true })
-  showSeatIds!: string[];
+  @IsString({ each: true })
+  seatLabels!: string[];
 
   @IsOptional()
   @IsInt()

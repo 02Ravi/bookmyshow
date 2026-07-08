@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { Movie, Prisma, Theatre } from '../../generated/prisma/client';
+import { HoldService } from '../../hold/service/hold.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { ListShowsQueryDto } from '../dto/list-shows-query.dto';
 import {
@@ -10,12 +11,16 @@ import {
 } from '../dto/show-response.dto';
 import {
   ShowSeatResponseDto,
-  toShowSeatResponse,
+  type SeatStatus,
 } from '../dto/show-seat-response.dto';
+import { computeSeatsForScreen } from '../util/computeSeatsForScreen';
 
 @Injectable()
 export class CatalogService {
-  constructor(private readonly prisma: PrismaService) {}
+  constructor(
+    private readonly prisma: PrismaService,
+    private readonly holdService: HoldService,
+  ) {}
 
   async findAllMovies(): Promise<Movie[]> {
     return this.prisma.movie.findMany({
@@ -111,19 +116,46 @@ export class CatalogService {
   }
 
   async findShowSeats(showId: string): Promise<ShowSeatResponseDto[]> {
-    const show = await this.prisma.show.findUnique({ where: { id: showId } });
+    const show = await this.prisma.show.findUnique({
+      where: { id: showId },
+      include: { screen: true },
+    });
     if (!show) {
       throw new NotFoundException(`Show ${showId} not found`);
     }
 
-    const showSeats = await this.prisma.showSeat.findMany({
-      where: { showId },
-      include: {
-        seat: { select: { row: true, number: true, type: true } },
-      },
-      orderBy: [{ seat: { row: 'asc' } }, { seat: { number: 'asc' } }],
-    });
+    const allSeats = computeSeatsForScreen(
+      show.screen.layoutConfig,
+      Number(show.basePrice),
+    );
 
-    return showSeats.map(toShowSeatResponse);
+    const [bookedRows, heldLabels] = await Promise.all([
+      this.prisma.bookedSeat.findMany({
+        where: { showId },
+        select: { seatLabel: true },
+      }),
+      this.holdService.getHeldSeats(showId),
+    ]);
+
+    const bookedSet = new Set(bookedRows.map((b) => b.seatLabel));
+    const heldSet = new Set(heldLabels);
+
+    return allSeats.map((seat) => {
+      let status: SeatStatus = 'AVAILABLE';
+      if (bookedSet.has(seat.seatLabel)) {
+        status = 'BOOKED';
+      } else if (heldSet.has(seat.seatLabel)) {
+        status = 'HELD';
+      }
+
+      return {
+        seatLabel: seat.seatLabel,
+        row: seat.row,
+        number: seat.number,
+        type: seat.type,
+        status,
+        price: seat.price.toFixed(2),
+      };
+    });
   }
 }

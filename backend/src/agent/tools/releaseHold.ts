@@ -18,7 +18,7 @@ export function createReleaseHoldTool(ctx: BookingToolsContext) {
       }
 
       try {
-        await ctx.reservation.cancel(ctx.session.reservationId);
+        await ctx.hold.releaseHold(ctx.session.reservationId);
         ctx.session.reservationId = null;
         return { released: true };
       } catch (error) {

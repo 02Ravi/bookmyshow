@@ -23,7 +23,7 @@ export interface AgentSession {
   pendingCancelBookingId: string | null;
   /** True after cancel picker is shown; cleared when user picks a booking or changes intent. */
   awaitingCancelBookingPick: boolean;
-  /** JSON array of showSeatId UUIDs awaiting profile before hold. */
+  /** JSON array of seatLabels awaiting profile before hold. */
   pendingShowSeatIds: string | null;
   messages: AgentStoredMessage[];
 }
